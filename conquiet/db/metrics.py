@@ -1,4 +1,4 @@
-from ...metrics.registry import (
+from ..metrics.registry import (
     DB_WRITE_TOTAL,
     DB_WRITE_LATENCY_SECONDS,
     DB_LOCK_ACQUIRE_LATENCY_SECONDS,

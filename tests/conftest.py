@@ -65,3 +65,4 @@ def create_test_table(mysql_engine):
     with mysql_engine.begin() as conn:
         conn.execute(text("DROP TABLE IF EXISTS test_table"))
 
+
