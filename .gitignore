@@ -1,97 +1,57 @@
-# Byte-compiled / optimized / DLL files
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
-
-# Distribution / packaging
 .Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-share/python-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
 
-# PyInstaller
-*.manifest
-*.spec
-
-# Unit test / coverage reports
-htmlcov/
-.tox/
-.nox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.py,cover
-.hypothesis/
-.pytest_cache/
-.mypy_cache/
-.dmypy.json
-dmypy.json
-
-# Virtual environments
+# Virtual Environment
 venv/
 env/
 ENV/
-env.bak/
-venv.bak/
 .venv
 
-# IDEs
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+
+# Testing
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.pytest_cache/
+.tox/
+.hypothesis/
+
+# IDE
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
-.project
-.pydevproject
-.settings/
-
-# OS files
 .DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
-
-# Stress test reports
-stress_report_*.json
-stress_report_*.txt
-
-# Logs
-*.log
-logs/
-
-# Database files (if any local test DBs)
-*.db
-*.sqlite
-*.sqlite3
 
 # Environment variables
 .env
 .env.local
-.env.*.local
+
+# Logs
+*.log
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Docker
+.dockerignore
 
 # Temporary files
 *.tmp
 *.bak
-*.swp
+*.cache
 

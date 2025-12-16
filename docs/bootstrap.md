@@ -181,6 +181,12 @@ The DB subsystem provides **direct** insert/update operations to MySQL, safe acr
 
 There is **no queue integration** in this subsystem.
 
+INSERT and UPDATE operations have different concurrency semantics.
+
+INSERT operations are idempotent and non-locking. They rely on MySQL uniqueness constraints to prevent duplicates. Duplicate-key errors are expected under concurrency, logged, and suppressed.
+
+UPDATE operations are correctness-critical and may involve read–modify–write cycles. UPDATE operations may be executed with configurable locking strategies to prevent lost updates under concurrent access.
+
 ### 5.1 Models: `conquiet/db/models.py`
 
 Define data types representing DB operations:
@@ -223,6 +229,42 @@ class LockStrategy(str, Enum):
 ```
 
 The only allowed combination is `ADVISORY_AND_ROW`. No other combos are supported.
+
+INSERT
+
+No locking is applied.
+
+INSERT relies on MySQL unique constraints.
+
+Duplicate key exceptions are:
+
+caught
+
+logged
+
+not rethrown
+
+INSERT is considered successful if:
+
+the row exists after execution (regardless of who inserted it).
+
+UPDATE
+
+UPDATE operations may be executed with a LockStrategy.
+
+UPDATE correctness assumes potential read–modify–write behavior.
+
+Without locking, lost updates are possible and expected.
+
+With locking, UPDATE correctness is guaranteed.
+
+Lock Strategy Applicability:
+Locking strategies apply **only to UPDATE operations**.
+
+INSERT operations never acquire locks, regardless of the configured LockStrategy.
+
+This is an intentional design decision to maximize throughput for idempotent inserts while preserving correctness for concurrent updates.
+
 
 ### 5.3 Lock Backend Base: `conquiet/db/locking/base.py`
 
@@ -511,6 +553,22 @@ class DbWriter:
         conn.execute(stmt, params)
 ```
 
+DbWriter.execute(op) behaves as follows:
+
+- If op_type == INSERT:
+  - Execute INSERT inside a transaction
+  - Catch and log duplicate-key errors
+  - Do not acquire or release any locks
+  - Do not rethrow duplicate-key exceptions
+
+- If op_type == UPDATE:
+  - Start a transaction
+  - Acquire lock according to LockStrategy
+  - Execute UPDATE
+  - Release lock (if applicable)
+  - Commit transaction
+
+
 Usage example (not part of the file, but for context):
 
 ```python
@@ -691,6 +749,28 @@ class RedisStreamsQueue:
             messages.append(self._parse_entry(entry_id.decode("utf-8"), fields))
         return messages
 ```
+
+Failure Modes & Expected Behavior
+
+Duplicate INSERT attempts:
+
+Expected
+
+Logged
+
+Suppressed
+
+UPDATE without locking:
+
+May result in lost updates
+
+Considered incorrect usage unless explicitly desired
+
+UPDATE with locking:
+
+Guarantees correctness
+
+May reduce throughput depending on strategy
 
 ### 6.3 Queue Metrics: `conquiet/queue/metrics.py`
 

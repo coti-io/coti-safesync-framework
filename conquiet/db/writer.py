@@ -1,12 +1,16 @@
+import logging
 import time
 from sqlalchemy.engine import Engine
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from .models import DbOperation, DbOperationType
 from .locking import make_lock_backend
 from .locking.strategy import LockStrategy
 from .metrics import observe_db_write, observe_lock_acquisition
 from ..config import DbConfig
 from ..errors import DbWriteError
+
+logger = logging.getLogger(__name__)
 
 
 class DbWriter:
@@ -25,14 +29,17 @@ class DbWriter:
         """
         Perform the DB operation with appropriate locking.
         Raises DbWriteError on failure.
+        
+        INSERT operations never acquire locks, regardless of configured LockStrategy.
+        Duplicate key errors for INSERT are caught, logged, and suppressed.
         """
         start_time = time.monotonic()
         status = "success"
 
         try:
             with self.engine.begin() as conn:
-                # Lock (if any)
-                if self.lock_backend:
+                # Lock (if any) - only for UPDATE operations
+                if self.lock_backend and op.op_type == DbOperationType.UPDATE:
                     lock_start = time.monotonic()
                     self.lock_backend.acquire(conn, op)
                     lock_latency = time.monotonic() - lock_start
@@ -46,8 +53,8 @@ class DbWriter:
                 else:
                     raise DbWriteError(f"Unsupported operation type: {op.op_type}")
 
-                # Release lock (if any)
-                if self.lock_backend:
+                # Release lock (if any) - only for UPDATE operations
+                if self.lock_backend and op.op_type == DbOperationType.UPDATE:
                     self.lock_backend.release(conn, op)
 
         except Exception as exc:
@@ -58,6 +65,11 @@ class DbWriter:
             observe_db_write(op.table, op.op_type.value, status, latency)
 
     def _insert(self, conn, op: DbOperation) -> None:
+        """
+        Execute INSERT operation.
+        Duplicate key errors are caught, logged, and suppressed.
+        INSERT is considered successful if the row exists after execution.
+        """
         # Only plain INSERT (no INSERT IGNORE or UPSERT)
         cols = list(op.payload.keys())
         col_names = ", ".join(cols)
@@ -65,7 +77,32 @@ class DbWriter:
 
         sql = f"INSERT INTO {op.table} ({col_names}) VALUES ({placeholders})"
         stmt = text(sql)
-        conn.execute(stmt, op.payload)
+        
+        try:
+            conn.execute(stmt, op.payload)
+        except IntegrityError as exc:
+            # Check if this is a MySQL duplicate key error
+            # MySQL error code 1062 is ER_DUP_ENTRY
+            # Also check error message for "Duplicate entry"
+            error_msg = str(exc.orig) if hasattr(exc, 'orig') else str(exc)
+            error_code = getattr(exc.orig, 'args', [None])[0] if hasattr(exc, 'orig') else None
+            
+            is_duplicate_key = (
+                error_code == 1062 or
+                "Duplicate entry" in error_msg or
+                "duplicate key" in error_msg.lower()
+            )
+            
+            if is_duplicate_key:
+                logger.info(
+                    "Duplicate key error suppressed for INSERT into %s with id=%s: %s",
+                    op.table,
+                    op.id_value,
+                    error_msg,
+                )
+            else:
+                # Not a duplicate key error, re-raise
+                raise
 
     def _update(self, conn, op: DbOperation) -> None:
         # UPDATE based on primary key

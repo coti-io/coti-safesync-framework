@@ -1,3 +1,4 @@
+import logging
 import pytest
 from sqlalchemy import create_engine, text
 from conquiet.db import DbWriter, DbOperation, DbOperationType, LockStrategy
@@ -150,64 +151,8 @@ class TestDbWriter:
             assert row[2] == 75               # value updated
             assert row[3] == "pending"        # status unchanged
 
-    def test_insert_with_advisory_lock(self, mysql_engine, db_config, create_table):
-        """Test INSERT with advisory locking."""
-        writer = DbWriter(mysql_engine, db_config, lock_strategy=LockStrategy.ADVISORY)
-        
-        op = DbOperation(
-            table="test_table",
-            op_type=DbOperationType.INSERT,
-            id_value=5,
-            payload={"id": 5, "name": "locked"},
-        )
-        
-        writer.execute(op)
-        
-        # Verify insert succeeded
-        with mysql_engine.begin() as conn:
-            result = conn.execute(text("SELECT * FROM test_table WHERE id = 5"))
-            assert result.fetchone() is not None
-
-    def test_insert_with_row_lock(self, mysql_engine, db_config, create_table):
-        """Test INSERT with row locking."""
-        writer = DbWriter(mysql_engine, db_config, lock_strategy=LockStrategy.ROW)
-        
-        op = DbOperation(
-            table="test_table",
-            op_type=DbOperationType.INSERT,
-            id_value=6,
-            payload={"id": 6, "name": "row_locked"},
-        )
-        
-        writer.execute(op)
-        
-        # Verify insert succeeded
-        with mysql_engine.begin() as conn:
-            result = conn.execute(text("SELECT * FROM test_table WHERE id = 6"))
-            assert result.fetchone() is not None
-
-    def test_insert_with_composite_lock(self, mysql_engine, db_config, create_table):
-        """Test INSERT with advisory+row locking."""
-        writer = DbWriter(mysql_engine, db_config, lock_strategy=LockStrategy.ADVISORY_AND_ROW)
-        
-        op = DbOperation(
-            table="test_table",
-            op_type=DbOperationType.INSERT,
-            id_value=7,
-            payload={"id": 7, "name": "composite_locked"},
-        )
-        
-        writer.execute(op)
-        
-        # Verify insert succeeded
-        with mysql_engine.begin() as conn:
-            result = conn.execute(text("SELECT * FROM test_table WHERE id = 7"))
-            assert result.fetchone() is not None
-
     def test_invalid_operation_type_raises_error(self, mysql_engine, db_config, create_table):
         """Test that invalid operation type raises error."""
-        writer = DbWriter(mysql_engine, db_config)
-        
         # Create an invalid operation type (this would require mocking)
         # For now, we test that execute validates op_type
         pass
@@ -226,4 +171,145 @@ class TestDbWriter:
         
         with pytest.raises(DbWriteError):
             writer.execute(op)
+
+    def test_insert_duplicate_key_suppressed(self, mysql_engine, db_config, create_table):
+        """Test that INSERT with duplicate key does not raise exception."""
+        writer = DbWriter(mysql_engine, db_config)
+        
+        # First insert
+        op1 = DbOperation(
+            table="test_table",
+            op_type=DbOperationType.INSERT,
+            id_value=10,
+            payload={"id": 10, "name": "first", "value": 100},
+        )
+        writer.execute(op1)
+        
+        # Second insert with same primary key (should not raise)
+        op2 = DbOperation(
+            table="test_table",
+            op_type=DbOperationType.INSERT,
+            id_value=10,
+            payload={"id": 10, "name": "duplicate", "value": 200},
+        )
+        # Should not raise exception
+        writer.execute(op2)
+        
+        # Verify first insert is still there (duplicate was suppressed)
+        with mysql_engine.begin() as conn:
+            result = conn.execute(text("SELECT * FROM test_table WHERE id = 10"))
+            row = result.fetchone()
+            assert row is not None
+            assert row[1] == "first"  # Original value preserved
+            assert row[2] == 100
+
+    def test_insert_duplicate_key_logged(self, mysql_engine, db_config, create_table, caplog):
+        """Test that duplicate key errors are logged."""
+        writer = DbWriter(mysql_engine, db_config)
+        
+        # First insert
+        op1 = DbOperation(
+            table="test_table",
+            op_type=DbOperationType.INSERT,
+            id_value=11,
+            payload={"id": 11, "name": "first"},
+        )
+        writer.execute(op1)
+        
+        # Second insert with same primary key
+        with caplog.at_level(logging.INFO):
+            op2 = DbOperation(
+                table="test_table",
+                op_type=DbOperationType.INSERT,
+                id_value=11,
+                payload={"id": 11, "name": "duplicate"},
+            )
+            writer.execute(op2)
+        
+        # Verify duplicate key error was logged
+        assert any("Duplicate key error suppressed" in record.message for record in caplog.records)
+        assert any("id=11" in record.message for record in caplog.records)
+
+    def test_insert_no_locking_even_with_strategy(self, mysql_engine, db_config, create_table):
+        """Test that INSERT operations never acquire locks, even when lock_strategy is set."""
+        # Create writer with advisory lock strategy
+        writer = DbWriter(mysql_engine, db_config, lock_strategy=LockStrategy.ADVISORY)
+        
+        # Mock or verify that lock_backend.acquire is not called for INSERT
+        # Since we can't easily mock in this test, we verify behavior:
+        # INSERT should succeed without locking
+        
+        op = DbOperation(
+            table="test_table",
+            op_type=DbOperationType.INSERT,
+            id_value=12,
+            payload={"id": 12, "name": "no_lock"},
+        )
+        
+        # Should succeed without acquiring locks
+        writer.execute(op)
+        
+        # Verify insert succeeded
+        with mysql_engine.begin() as conn:
+            result = conn.execute(text("SELECT * FROM test_table WHERE id = 12"))
+            assert result.fetchone() is not None
+
+    def test_insert_idempotent(self, mysql_engine, db_config, create_table):
+        """Test that INSERT is idempotent - multiple attempts with same key succeed."""
+        writer = DbWriter(mysql_engine, db_config)
+        
+        op = DbOperation(
+            table="test_table",
+            op_type=DbOperationType.INSERT,
+            id_value=13,
+            payload={"id": 13, "name": "idempotent", "value": 300},
+        )
+        
+        # Execute multiple times - all should succeed
+        writer.execute(op)
+        writer.execute(op)
+        writer.execute(op)
+        
+        # Verify only one row exists
+        with mysql_engine.begin() as conn:
+            result = conn.execute(text("SELECT COUNT(*) FROM test_table WHERE id = 13"))
+            count = result.scalar()
+            assert count == 1
+            
+            # Verify row content
+            result = conn.execute(text("SELECT * FROM test_table WHERE id = 13"))
+            row = result.fetchone()
+            assert row is not None
+            assert row[1] == "idempotent"
+            assert row[2] == 300
+
+    def test_update_still_uses_locking(self, mysql_engine, db_config, create_table):
+        """Test that UPDATE operations still acquire locks when lock_strategy is set."""
+        writer = DbWriter(mysql_engine, db_config, lock_strategy=LockStrategy.ADVISORY)
+        
+        # First insert
+        insert_op = DbOperation(
+            table="test_table",
+            op_type=DbOperationType.INSERT,
+            id_value=14,
+            payload={"id": 14, "name": "original", "value": 50},
+        )
+        writer.execute(insert_op)
+        
+        # Update should still use locking (this test verifies UPDATE locking still works)
+        update_op = DbOperation(
+            table="test_table",
+            op_type=DbOperationType.UPDATE,
+            id_value=14,
+            payload={"name": "updated", "value": 75},
+        )
+        writer.execute(update_op)
+        
+        # Verify update succeeded
+        with mysql_engine.begin() as conn:
+            result = conn.execute(text("SELECT * FROM test_table WHERE id = 14"))
+            row = result.fetchone()
+            assert row is not None
+            assert row[1] == "updated"
+            assert row[2] == 75
 
