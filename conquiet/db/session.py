@@ -4,7 +4,7 @@ from typing import Any, Mapping
 
 from sqlalchemy import text
 from sqlalchemy.engine import Engine, Connection
-from sqlalchemy.sql import TextClause
+from sqlalchemy.sql.elements import TextClause
 
 
 class DbSession:
