@@ -1,14 +1,14 @@
 from sqlalchemy import text
-from sqlalchemy.engine import Connection
 from .base import LockBackend
 from ..models import DbOperation
+from ..session import DbSession
 
 
 class MySQLTableLockBackend(LockBackend):
-    def acquire(self, conn: Connection, op: DbOperation) -> None:
+    def acquire(self, session: DbSession, op: DbOperation) -> None:
         stmt = text(f"LOCK TABLES {op.table} WRITE")
-        conn.execute(stmt)
+        session.execute(stmt)
 
-    def release(self, conn: Connection, op: DbOperation) -> None:
-        conn.execute(text("UNLOCK TABLES"))
+    def release(self, session: DbSession, op: DbOperation) -> None:
+        session.execute(text("UNLOCK TABLES"))
 

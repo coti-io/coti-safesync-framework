@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
-from sqlalchemy.engine import Connection
 from ..models import DbOperation
+from ..session import DbSession
 
 
 class LockBackend(ABC):
@@ -10,12 +10,12 @@ class LockBackend(ABC):
     """
 
     @abstractmethod
-    def acquire(self, conn: Connection, op: DbOperation) -> None:
-        """Acquire the lock for this operation on the given connection."""
+    def acquire(self, session: DbSession, op: DbOperation):
+        """Acquire the lock for this operation using the given DbSession."""
         ...
 
     @abstractmethod
-    def release(self, conn: Connection, op: DbOperation) -> None:
-        """Release the lock for this operation on the given connection."""
+    def release(self, session: DbSession, op: DbOperation) -> None:
+        """Release the lock for this operation using the given DbSession."""
         ...
 

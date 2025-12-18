@@ -1,5 +1,6 @@
 import logging
 import time
+import warnings
 from sqlalchemy.engine import Engine
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
@@ -7,6 +8,7 @@ from .models import DbOperation, DbOperationType
 from .locking import make_lock_backend
 from .locking.strategy import LockStrategy
 from .metrics import observe_db_write, observe_lock_acquisition
+from .session import DbSession
 from ..config import DbConfig
 from ..errors import DbWriteError
 
@@ -14,12 +16,30 @@ logger = logging.getLogger(__name__)
 
 
 class DbWriter:
+    """
+    Thin wrapper for idempotent INSERT and UPDATE operations.
+    
+    .. deprecated:: 2.0
+        DbWriter is deprecated. Prefer using DbSession directly with explicit locks:
+        
+        - For INSERT: Use DbSession.execute() directly and handle duplicate keys
+        - For UPDATE: Use DbSession.execute() with AdvisoryLock or RowLock as needed
+        - For OCC: Use DbSession.execute() with conditional WHERE clauses
+        
+        DbWriter will be removed in a future version.
+    """
     def __init__(
         self,
         engine: Engine,
         db_config: DbConfig,
         lock_strategy: LockStrategy = LockStrategy.NONE,
     ) -> None:
+        warnings.warn(
+            "DbWriter is deprecated. Use DbSession with explicit locks instead. "
+            "See bootstrap.md for migration guidance.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self.engine = engine
         self.db_config = db_config
         self.lock_strategy = lock_strategy
@@ -37,25 +57,25 @@ class DbWriter:
         status = "success"
 
         try:
-            with self.engine.begin() as conn:
+            with DbSession(self.engine) as session:
                 # Lock (if any) - only for UPDATE operations
                 if self.lock_backend and op.op_type == DbOperationType.UPDATE:
                     lock_start = time.monotonic()
-                    self.lock_backend.acquire(conn, op)
+                    self.lock_backend.acquire(session, op)
                     lock_latency = time.monotonic() - lock_start
                     observe_lock_acquisition(self.lock_strategy.value, lock_latency, True)
 
                 # Perform operation
                 if op.op_type == DbOperationType.INSERT:
-                    self._insert(conn, op)
+                    self._insert(session, op)
                 elif op.op_type == DbOperationType.UPDATE:
-                    self._update(conn, op)
+                    self._update(session, op)
                 else:
                     raise DbWriteError(f"Unsupported operation type: {op.op_type}")
 
                 # Release lock (if any) - only for UPDATE operations
                 if self.lock_backend and op.op_type == DbOperationType.UPDATE:
-                    self.lock_backend.release(conn, op)
+                    self.lock_backend.release(session, op)
 
         except Exception as exc:
             status = "error"
@@ -64,7 +84,7 @@ class DbWriter:
             latency = time.monotonic() - start_time
             observe_db_write(op.table, op.op_type.value, status, latency)
 
-    def _insert(self, conn, op: DbOperation) -> None:
+    def _insert(self, session: DbSession, op: DbOperation) -> None:
         """
         Execute INSERT operation.
         Duplicate key errors are caught, logged, and suppressed.
@@ -79,7 +99,7 @@ class DbWriter:
         stmt = text(sql)
         
         try:
-            conn.execute(stmt, op.payload)
+            session.execute(stmt, op.payload)
         except IntegrityError as exc:
             # Check if this is a MySQL duplicate key error
             # MySQL error code 1062 is ER_DUP_ENTRY
@@ -104,7 +124,7 @@ class DbWriter:
                 # Not a duplicate key error, re-raise
                 raise
 
-    def _update(self, conn, op: DbOperation) -> None:
+    def _update(self, session: DbSession, op: DbOperation) -> None:
         # UPDATE based on primary key
         cols = [c for c in op.payload.keys() if c != self.db_config.id_column]
         if not cols:
@@ -120,5 +140,5 @@ class DbWriter:
         params["id_value"] = op.id_value
 
         stmt = text(sql)
-        conn.execute(stmt, params)
+        session.execute(stmt, params)
 

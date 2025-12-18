@@ -1,6 +1,6 @@
-from sqlalchemy.engine import Connection
 from .base import LockBackend
 from ..models import DbOperation
+from ..session import DbSession
 
 
 class CompositeLockBackend(LockBackend):
@@ -12,11 +12,11 @@ class CompositeLockBackend(LockBackend):
     def __init__(self, backends: list[LockBackend]):
         self.backends = backends
 
-    def acquire(self, conn: Connection, op: DbOperation) -> None:
+    def acquire(self, session: DbSession, op: DbOperation) -> None:
         for backend in self.backends:
-            backend.acquire(conn, op)
+            backend.acquire(session, op)
 
-    def release(self, conn: Connection, op: DbOperation) -> None:
+    def release(self, session: DbSession, op: DbOperation) -> None:
         for backend in reversed(self.backends):
-            backend.release(conn, op)
+            backend.release(session, op)
 
