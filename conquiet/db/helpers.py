@@ -81,3 +81,4 @@ def occ_update(
     stmt = text(sql)
     return session.execute(stmt, params)
 
+
