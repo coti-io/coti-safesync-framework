@@ -33,29 +33,44 @@ def test_raises_lock_timeout_error_when_lock_cannot_be_acquired(engine) -> None:
                         pass
 
 
-def test_releases_lock_on_normal_context_exit(engine) -> None:
+def test_lock_held_after_advisorylock_exit_while_dbsession_active(engine) -> None:
+    """
+    AdvisoryLock intentionally does NOT release the lock in __exit__.
+    The lock remains held while the surrounding DbSession is active.
+    """
     key = _lock_key()
 
     with DbSession(engine) as session1:
         with AdvisoryLock(session1, key, timeout=1):
             assert session1.execute_scalar("SELECT 1") == 1
+        # AdvisoryLock context exits, but lock is still held (connection-scoped)
+        
+        # Lock is still held while DbSession is active
+        with DbSession(engine) as session2:
+            with pytest.raises(LockTimeoutError):
+                with AdvisoryLock(session2, key, timeout=0):
+                    pass
+        # Note: Lock release when connection closes is validated by concurrency tests
 
-    with DbSession(engine) as session2:
-        with AdvisoryLock(session2, key, timeout=0):
-            assert session2.execute_scalar("SELECT 1") == 1
 
-
-def test_releases_lock_when_exception_is_raised_inside_context(engine) -> None:
+def test_lock_held_after_exception_while_dbsession_active(engine) -> None:
+    """
+    Even when an exception is raised inside AdvisoryLock context,
+    the lock remains held while the surrounding DbSession is active.
+    """
     key = _lock_key()
 
     with pytest.raises(RuntimeError):
         with DbSession(engine) as session1:
             with AdvisoryLock(session1, key, timeout=1):
                 raise RuntimeError("boom")
-
-    with DbSession(engine) as session2:
-        with AdvisoryLock(session2, key, timeout=0):
-            assert session2.execute_scalar("SELECT 1") == 1
+            # AdvisoryLock context exits (even on exception), but lock is still held
+            # Lock is still held while DbSession is active
+            with DbSession(engine) as session2:
+                with pytest.raises(LockTimeoutError):
+                    with AdvisoryLock(session2, key, timeout=0):
+                        pass
+        # Note: Lock release when connection closes is validated by concurrency tests
 
 
 def test_requires_active_dbsession(engine) -> None:

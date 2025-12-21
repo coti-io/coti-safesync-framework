@@ -11,6 +11,13 @@ class AdvisoryLock:
     
     Lock is connection-scoped and released on context exit.
     Does not own the transaction - must be used within a DbSession.
+
+    Important:
+    MySQL advisory locks are connection-scoped, not transaction-scoped.
+    This lock intentionally does NOT call RELEASE_LOCK on exit.
+
+    The lock is released only when the surrounding DbSession commits/rolls back
+    and closes the connection.
     
     Usage:
         with db.session() as session:
@@ -60,11 +67,16 @@ class AdvisoryLock:
         
         Lock is released regardless of whether an exception occurred.
         """
-        if self._acquired:
-            stmt = text("SELECT RELEASE_LOCK(:lock_name)")
-            # RELEASE_LOCK returns a scalar; we ignore the result
-            self.session.execute_scalar(stmt, {"lock_name": self.key})
-            self._acquired = False
+        # NOTE:
+        # MySQL advisory locks are connection-scoped. Releasing the lock here would
+        # happen *before* the surrounding DbSession commits/rolls back (because the
+        # lock context exits before DbSession.__exit__). That ordering can allow
+        # another session to acquire the lock and observe stale state, violating the
+        # invariants validated by bootstrap_concurrency_tests.md.
+        #
+        # We therefore rely on the DbSession connection closing (after commit/rollback)
+        # to release the lock deterministically.
+        self._acquired = False
 
         # Propagate exceptions
         return False
