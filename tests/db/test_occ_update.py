@@ -17,7 +17,7 @@ def test_occ_update_returns_1_and_increments_version_on_match(engine, fresh_tabl
 
         rc = occ_update(
             session=session,
-            table=f"`{table}`",
+            table=table,
             id_column="id",
             id_value=1,
             version_column="version",
@@ -43,7 +43,7 @@ def test_occ_update_returns_0_and_does_not_modify_row_on_version_mismatch(
 
         rc = occ_update(
             session=session,
-            table=f"`{table}`",
+            table=table,
             id_column="id",
             id_value=1,
             version_column="version",
@@ -61,7 +61,7 @@ def test_occ_update_requires_active_dbsession(engine, fresh_table: str) -> None:
     with pytest.raises(RuntimeError):
         occ_update(
             session=session,
-            table=f"`{fresh_table}`",
+            table=fresh_table,
             id_column="id",
             id_value=1,
             version_column="version",

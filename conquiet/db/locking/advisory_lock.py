@@ -60,6 +60,11 @@ class AdvisoryLock:
             LockTimeoutError: If lock cannot be acquired within timeout
         """
         stmt = text("SELECT GET_LOCK(:lock_name, :timeout)")
+        # Enforce active DbSession
+        if self.session._conn is None:
+            raise RuntimeError(
+                "AdvisoryLock.__enter__() requires an active DbSession. "
+            )
         res = self.session.execute_scalar(
             stmt, {"lock_name": self.key, "timeout": self.timeout}
         )
@@ -90,7 +95,6 @@ class AdvisoryLock:
         #
         # We therefore rely on the DbSession connection closing (after commit/rollback)
         # to release the lock deterministically.
-        self._acquired = False
 
         # Propagate exceptions
         return False

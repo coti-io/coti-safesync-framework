@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from sqlalchemy import text
 from ..session import DbSession
+from ..helpers import _validate_identifier
 
 
 class RowLock:
@@ -35,6 +36,12 @@ class RowLock:
     ⚠️ If you want optimistic concurrency with retries, use occ_update instead.
     See docs/occ.md for the correct OCC pattern.
 
+    ⚠️ SECURITY CONTRACT ⚠️
+    Table name and column names in the where dictionary MUST be trusted identifiers
+    - hardcoded strings or validated at application boundaries. They MUST NOT come
+    directly from user input. This class validates identifier format to prevent SQL
+    injection, but identifiers are still interpolated into SQL strings.
+
     Usage:
         with DbSession(engine) as session:
             row = RowLock(session, "orders", {"id": 42}).acquire()
@@ -54,12 +61,14 @@ class RowLock:
         
         Args:
             session: Active DbSession instance
-            table: Table name
+            table: Table name (must be a trusted identifier, not user-controlled)
             where: Dictionary of column -> value for WHERE clause
                    (e.g., {"id": 42} or {"order_id": 123, "item_id": 456})
+                   Column names must be trusted identifiers, not user-controlled
         """
+        # Validate table name to prevent SQL injection
+        self.table = _validate_identifier(table, "table")
         self.session = session
-        self.table = table
         self.where = where
 
     def acquire(self) -> dict | None:
@@ -85,9 +94,11 @@ class RowLock:
             )
         
         # Build WHERE clause from where dict (sorted keys for deterministic SQL)
+        # Validate all column names to prevent SQL injection
         where_clauses = []
         params = {}
         for i, (col, val) in enumerate(sorted(self.where.items())):
+            col = _validate_identifier(col, "column name")  # Validate each column name
             param_name = f"where_{i}"
             where_clauses.append(f"{col} = :{param_name}")
             params[param_name] = val
