@@ -74,9 +74,12 @@ class AdvisoryLock:
 
     def __exit__(self, exc_type, exc, tb) -> None:
         """
-        Release the advisory lock.
-        
-        Lock is released regardless of whether an exception occurred.
+        Exit the advisory lock context.
+    
+        Note: The lock is NOT released here. It is released when the surrounding
+        DbSession connection closes (after commit/rollback). This ensures the lock
+        is held across the transaction commit, preventing other connections from
+        observing stale state.
         """
         # NOTE:
         # MySQL advisory locks are connection-scoped. Releasing the lock here would

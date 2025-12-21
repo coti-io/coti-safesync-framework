@@ -120,6 +120,16 @@ class DbSession:
         """
         Execute a SELECT returning multiple rows.
         """
+
+    def execute_scalar(
+        self,
+        sql: str | TextClause,
+        params: dict | None = None,
+    ) -> Any:
+        """
+        Execute a statement expected to return a single scalar value.
+        Intended for control primitives (e.g., GET_LOCK).
+        """
 ```
 
 ### Usage
@@ -270,8 +280,8 @@ with db.session() as session:
         session.execute(...)
 ```
 
-* Lock is connection-scoped
-* Lock is released on `__exit__`
+* Lock is connection-scoped and released when the DbSession connection closes
+* Lock is NOT released in `__exit__` (intentional design)
 * Does not own transaction
 
 ---
@@ -442,7 +452,7 @@ conquiet is designed specifically for **MySQL with the InnoDB storage engine**.
 - **Storage engine**: InnoDB
 - **Transactions**: Enabled
 - **Row-level locking**: Available
-- **Advisory locks**: Supported via GET_LOCK / RELEASE_LOCK
+- **Advisory locks**: Supported via GET_LOCK (connection-scoped, released on connection close)
 
 ### Recommended isolation level
 
