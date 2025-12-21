@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import os
 import queue
-import time
 import uuid
 from dataclasses import dataclass
-from typing import Any, Callable, Iterable
+from typing import Any, Callable
 
 import pytest
 from sqlalchemy import create_engine
@@ -139,7 +138,7 @@ def run_workers(
         procs.append(p)
 
     for p in procs:
-        p.join(timeout=120)
+        p.join(timeout=30)
 
     # Collect errors, if any.
     errors: list[WorkerError] = []
@@ -148,6 +147,15 @@ def run_workers(
             errors.append(err_queue.get_nowait())
         except queue.Empty:
             break
+
+    # Check for stuck workers (still alive after join timeout)
+    stuck = [p for p in procs if p.is_alive()]
+    if stuck:
+        for p in stuck:
+            p.terminate()
+            p.join(timeout=5)
+        details = [f"process pid={p.pid} was stuck and terminated" for p in stuck]
+        pytest.fail("Worker processes were stuck:\n" + "\n".join(details), pytrace=False)
 
     # If any worker didn't exit cleanly, fail with diagnostics.
     bad = [p for p in procs if p.exitcode not in (0, None)]
