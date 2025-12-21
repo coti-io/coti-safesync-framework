@@ -46,12 +46,12 @@ def test_does_not_commit_or_rollback_implicitly(engine, fresh_table: str) -> Non
 
     with pytest.raises(RuntimeError):
         with DbSession(engine) as session:
-            session.execute(f"INSERT INTO `{table}` (id, value) VALUES (1, 10)")
+            session.execute(f"INSERT INTO `{table}` (id, value) VALUES (1, 10)", {})
             assert RowLock(session, table, {"id": 1}).acquire() is not None
             raise RuntimeError("force rollback")
 
     with DbSession(engine) as session2:
-        assert session2.fetch_one(f"SELECT id FROM `{table}` WHERE id = 1") is None
+        assert session2.fetch_one(f"SELECT id FROM `{table}` WHERE id = 1", {}) is None
 
 
 def test_where_dict_order_is_deterministic(engine, fresh_table: str) -> None:

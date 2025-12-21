@@ -26,6 +26,7 @@ def _atomic_update_worker(*, engine, worker_id: int, table: str, ops: int) -> No
         with DbSession(engine) as session:
             session.execute(
                 f"UPDATE `{table}` SET value = value + 1 WHERE id = 1",
+                {},
             )
 
 

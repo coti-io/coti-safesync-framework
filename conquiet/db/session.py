@@ -62,14 +62,14 @@ class DbSession:
     def execute(
         self,
         sql: str | TextClause,
-        params: Mapping[str, Any] | None = None,
+        params: Mapping[str, Any],
     ) -> int:
         """
         Execute a non-SELECT statement and return affected row count.
         """
         conn = self._connection()
         stmt = text(sql) if isinstance(sql, str) else sql
-        result = conn.execute(stmt, params or {})
+        result = conn.execute(stmt, params)
         if result.rowcount is None:
             raise RuntimeError(
                 "execute() received None rowcount for statement. "
@@ -80,7 +80,7 @@ class DbSession:
     def execute_scalar(
         self,
         sql: str | TextClause,
-        params: Mapping[str, Any] | None = None,
+        params: Mapping[str, Any],
     ) -> Any:
         """
         Execute a statement expected to return a single scalar value.
@@ -88,20 +88,20 @@ class DbSession:
         """
         conn = self._connection()
         stmt = text(sql) if isinstance(sql, str) else sql
-        result = conn.execute(stmt, params or {})
+        result = conn.execute(stmt, params)
         return result.scalar_one_or_none()
 
     def fetch_one(
         self,
         sql: str | TextClause,
-        params: Mapping[str, Any] | None = None,
+        params: Mapping[str, Any],
     ) -> dict[str, Any] | None:
         """
         Execute a SELECT expected to return 0 or 1 row. Raises if more than one row.
         """
         conn = self._connection()
         stmt = text(sql) if isinstance(sql, str) else sql
-        result = conn.execute(stmt, params or {})
+        result = conn.execute(stmt, params)
         row = result.mappings().one_or_none()
         if row is None:
             return None
@@ -110,13 +110,13 @@ class DbSession:
     def fetch_all(
         self,
         sql: str | TextClause,
-        params: Mapping[str, Any] | None = None,
+        params: Mapping[str, Any],
     ) -> list[dict[str, Any]]:
         """
         Execute a SELECT expected to return multiple rows.
         """
         conn = self._connection()
         stmt = text(sql) if isinstance(sql, str) else sql
-        result = conn.execute(stmt, params or {})
+        result = conn.execute(stmt, params)
         return [dict(row) for row in result.mappings()]
 

@@ -18,7 +18,7 @@ def test_acquires_advisory_lock_within_timeout(engine) -> None:
     key = _lock_key()
     with DbSession(engine) as session:
         with AdvisoryLock(session, key, timeout=1):
-            assert session.execute_scalar("SELECT 1") == 1
+            assert session.execute_scalar("SELECT 1", {}) == 1
 
 
 def test_raises_lock_timeout_error_when_lock_cannot_be_acquired(engine) -> None:
@@ -42,7 +42,7 @@ def test_lock_held_after_advisorylock_exit_while_dbsession_active(engine) -> Non
 
     with DbSession(engine) as session1:
         with AdvisoryLock(session1, key, timeout=1):
-            assert session1.execute_scalar("SELECT 1") == 1
+            assert session1.execute_scalar("SELECT 1", {}) == 1
         # AdvisoryLock context exits, but lock is still held (connection-scoped)
         
         # Lock is still held while DbSession is active

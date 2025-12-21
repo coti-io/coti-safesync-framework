@@ -65,7 +65,8 @@ def test_invariant_idempotent_insert_correctness() -> None:
     # Invariant: At most one row exists for the given primary key
     with DbSession(engine) as session:
         count = session.execute_scalar(
-            f"SELECT COUNT(*) FROM `{table}` WHERE id = 1"
+            f"SELECT COUNT(*) FROM `{table}` WHERE id = 1",
+            {},
         )
         assert count == 1, f"Expected exactly 1 row, found {count}"
 

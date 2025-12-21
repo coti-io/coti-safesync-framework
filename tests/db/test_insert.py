@@ -14,8 +14,8 @@ def test_dbsession_duplicate_insert_raises_integrity_error(engine, fresh_table: 
     table = fresh_table
 
     with DbSession(engine) as session:
-        session.execute(f"INSERT INTO `{table}` (id, value) VALUES (1, 10)")
+        session.execute(f"INSERT INTO `{table}` (id, value) VALUES (1, 10)", {})
         with pytest.raises(IntegrityError):
-            session.execute(f"INSERT INTO `{table}` (id, value) VALUES (1, 999)")
+            session.execute(f"INSERT INTO `{table}` (id, value) VALUES (1, 999)", {})
 
 

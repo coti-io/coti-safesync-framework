@@ -22,7 +22,7 @@ from ._harness import (
 def _rmw_no_lock_worker(*, engine, worker_id: int, table: str, ops: int) -> None:
     for _ in range(ops):
         with DbSession(engine) as session:
-            row = session.fetch_one(f"SELECT value FROM `{table}` WHERE id = 1")
+            row = session.fetch_one(f"SELECT value FROM `{table}` WHERE id = 1", {})
             assert row is not None
             new_val = int(row["value"]) + 1
             session.execute(
@@ -44,7 +44,7 @@ def _rmg_with_advisory_lock_worker(*, engine, worker_id: int, table: str, ops: i
     for _ in range(ops):
         with DbSession(engine) as session:
             with AdvisoryLock(session, key, timeout=10):
-                row = session.fetch_one(f"SELECT value FROM `{table}` WHERE id = 1")
+                row = session.fetch_one(f"SELECT value FROM `{table}` WHERE id = 1", {})
                 assert row is not None
                 new_val = int(row["value"]) + 1
                 session.execute(f"UPDATE `{table}` SET value = :v WHERE id = 1", {"v": new_val})

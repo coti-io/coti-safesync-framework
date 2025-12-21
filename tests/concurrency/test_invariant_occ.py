@@ -63,7 +63,8 @@ def _occ_with_retry_worker(*, engine, worker_id: int, table: str, ops: int) -> N
             try:
                 with DbSession(engine) as session:
                     row = session.fetch_one(
-                        f"SELECT id, value, version FROM `{table}` WHERE id = 1"
+                        f"SELECT id, value, version FROM `{table}` WHERE id = 1",
+                        {},
                     )
                     assert row is not None
                     current_version = int(row["version"])
@@ -105,7 +106,7 @@ def _occ_without_retry_worker(*, engine, worker_id: int, table: str, ops: int) -
     """
     for _ in range(ops):
         with DbSession(engine) as session:
-            row = session.fetch_one(f"SELECT id, value, version FROM `{table}` WHERE id = 1")
+            row = session.fetch_one(f"SELECT id, value, version FROM `{table}` WHERE id = 1", {})
             assert row is not None
             
             current_version = int(row["version"])

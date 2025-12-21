@@ -26,7 +26,7 @@ def test_occ_update_returns_1_and_increments_version_on_match(engine, fresh_tabl
         )
         assert rc == 1
 
-        row = session.fetch_one(f"SELECT id, value, version, name FROM `{table}` WHERE id = 1")
+        row = session.fetch_one(f"SELECT id, value, version, name FROM `{table}` WHERE id = 1", {})
         assert row == {"id": 1, "value": 11, "version": 6, "name": "b"}
 
 
@@ -52,7 +52,7 @@ def test_occ_update_returns_0_and_does_not_modify_row_on_version_mismatch(
         )
         assert rc == 0
 
-        row = session.fetch_one(f"SELECT id, value, version, name FROM `{table}` WHERE id = 1")
+        row = session.fetch_one(f"SELECT id, value, version, name FROM `{table}` WHERE id = 1", {})
         assert row == {"id": 1, "value": 10, "version": 5, "name": "a"}
 
 
