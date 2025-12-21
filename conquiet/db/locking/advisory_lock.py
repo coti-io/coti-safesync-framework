@@ -8,24 +8,35 @@ from ...errors import LockTimeoutError
 class AdvisoryLock:
     """
     General-purpose mutex using MySQL advisory locks.
-    
-    Lock is connection-scoped and released on context exit.
-    Does not own the transaction - must be used within a DbSession.
 
-    Important:
-    MySQL advisory locks are connection-scoped, not transaction-scoped.
-    This lock intentionally does NOT call RELEASE_LOCK on exit.
+    MySQL advisory locks are **connection-scoped**, not transaction-scoped.
 
-    The lock is released only when the surrounding DbSession commits/rolls back
-    and closes the connection.
-    
+    This lock is intentionally NOT released in __exit__.
+    It is released only when the surrounding DbSession closes
+    (after commit or rollback).
+
+    ⚠️ IMPORTANT SEMANTICS ⚠️
+    - The lock is held across transaction commit.
+    - This guarantees that no other connection can observe
+      intermediate or stale state.
+
+    ⚠️ USAGE RULES ⚠️
+    - Do NOT use AdvisoryLock inside retry loops.
+    - Do NOT use AdvisoryLock to "protect" OCC.
+    - Each lock acquisition should guard a single logical operation.
+
+    AdvisoryLock is NOT a substitute for optimistic concurrency control (OCC).
+    If you need retries based on version mismatch, use occ_update instead.
+
+    See docs/occ.md for when OCC is the correct tool.
+
     Usage:
-        with db.session() as session:
+        with DbSession(engine) as session:
             with AdvisoryLock(session, "order:42"):
-                # protected logic
                 row = session.fetch_one(...)
                 session.execute(...)
     """
+
 
     def __init__(self, session: DbSession, key: str, timeout: int = 10) -> None:
         """

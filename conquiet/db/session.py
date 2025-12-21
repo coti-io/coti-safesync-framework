@@ -11,6 +11,14 @@ class DbSession:
     """
     Transactional wrapper around a SQLAlchemy Engine connection.
 
+    A DbSession represents a *single database transaction*.
+    The transaction begins on __enter__ and commits or rolls back on __exit__.
+
+    ⚠️ Do NOT perform retry loops (e.g. OCC retries) inside a single DbSession.
+    Each retry must use a new DbSession / transaction.
+
+    See docs/occ.md for details on correct OCC transaction boundaries.
+
     Use as:
         with DbSession(engine) as session:
             session.execute(...)

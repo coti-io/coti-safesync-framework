@@ -527,3 +527,10 @@ Users must:
 - Keep transactions short
 - Avoid long-running logic while holding row locks
 - Avoid I/O or network calls inside row-locked transactions
+
+### Optimistic Concurrency Control (OCC)
+
+Conquiet provides a low-level OCC helper (`occ_update`), but correctness depends
+on strict usage rules regarding transaction boundaries and retries.
+
+**All users MUST read:** `docs/occ.md`

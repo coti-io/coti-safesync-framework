@@ -7,30 +7,41 @@ from ..session import DbSession
 class RowLock:
     """
     Pessimistic read-modify-write protection using SELECT ... FOR UPDATE.
-    
+
     Row locks are held for the entire duration of the surrounding transaction
     and are released only when the transaction commits or rolls back.
-    
+
     This is NOT a context manager - locks are transaction-scoped, not method-scoped.
-    
+
+    ⚠️ IMPORTANT USAGE RULES ⚠️
+    - Do NOT use RowLock inside retry loops.
+    - Do NOT hold transactions open longer than necessary.
+    - Each RowLock acquisition should be followed by exactly one
+      read-modify-write sequence and then committed.
+
     **Important: Indexing Requirements**
-    
+
     The WHERE clause predicates should match indexed columns. Non-indexed predicates
     may cause:
     - Full table scans (performance degradation)
     - Gap locks (especially under REPEATABLE READ isolation)
     - Unexpected contention and deadlocks
-    
+
     Ensure your WHERE clause columns are indexed for optimal performance and
     predictable locking behavior.
-    
+
+    Use RowLock when you need strict serialization.
+
+    ⚠️ If you want optimistic concurrency with retries, use occ_update instead.
+    See docs/occ.md for the correct OCC pattern.
+
     Usage:
-        with db.session() as session:
+        with DbSession(engine) as session:
             row = RowLock(session, "orders", {"id": 42}).acquire()
             if row is None:
                 return  # row doesn't exist
-            
-            # Use row data for read-modify-write
+
+            # Exactly one read-modify-write per transaction
             session.execute(
                 "UPDATE orders SET status = :status WHERE id = :id",
                 {"id": row["id"], "status": "processed"}
