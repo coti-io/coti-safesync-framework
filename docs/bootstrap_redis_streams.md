@@ -160,6 +160,8 @@ def read(block_ms: int, count: int = 1) -> list[QueueMessage]
 Rules:
 
 * Must use `XREADGROUP GROUP <group> <consumer> STREAMS <stream> >`
+* `block_ms` must be a positive integer (> 0)
+* `block_ms=0` is rejected (Redis interprets 0 as infinite blocking)
 * `count` is advisory
 * Returned messages become **pending**
 * Returned list may be empty
