@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import pytest
-from sqlalchemy.exc import IntegrityError
 
+from conquiet.db.helpers import insert_idempotent
 from conquiet.db.session import DbSession
 
 from ._harness import (
@@ -24,15 +24,11 @@ def _idempotent_insert_worker(*, engine, worker_id: int, table: str, ops: int) -
     """
     for _ in range(ops):
         with DbSession(engine) as session:
-            try:
-                session.execute(
-                    f"INSERT INTO `{table}` (id, value, version) VALUES (:id, :value, :version)",
-                    {"id": 1, "value": 100, "version": 0},
-                )
-            except IntegrityError:
-                # Duplicate key error is expected - another worker already inserted
-                # This is the idempotent behavior we're testing
-                pass
+            insert_idempotent(
+                session,
+                f"INSERT INTO `{table}` (id, value, version) VALUES (:id, :value, :version)",
+                {"id": 1, "value": 100, "version": 0},
+            )
 
 
 @pytest.mark.concurrency

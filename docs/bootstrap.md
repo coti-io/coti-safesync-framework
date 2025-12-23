@@ -151,18 +151,39 @@ All locks and writes must occur **inside** a `DbSession`.
 * Correctness relies on:
 
   * MySQL uniqueness constraints
-  * Catching duplicate-key exceptions
-* Duplicate-key exceptions:
-
-  * are logged
-  * increment metrics
-  * are **not rethrown**
+  * Catching duplicate-key exceptions (when using idempotent helper)
 
 ### Semantics
 
-> An INSERT is considered successful if the row exists after execution, regardless of which process inserted it.
+> When using idempotent INSERT semantics, an INSERT is considered successful if the row exists after execution, regardless of which process inserted it.
 
 This design maximizes throughput and supports at-least-once delivery semantics.
+
+### API
+
+**Default behavior**: `DbSession.execute()` raises `IntegrityError` on duplicate key errors.
+
+For idempotent INSERTs, use the dedicated helper:
+
+```python
+from conquiet.db.helpers import insert_idempotent
+
+with DbSession(engine) as session:
+    inserted = insert_idempotent(
+        session,
+        "INSERT INTO orders (id, status) VALUES (:id, :status)",
+        {"id": 42, "status": "pending"},
+    )
+    # inserted == True  -> row was inserted
+    # inserted == False -> row already existed (duplicate key)
+```
+
+**Important**:
+
+* `insert_idempotent()` suppresses **only** MySQL duplicate-key errors (error code 1062)
+* All other `IntegrityError` or database errors are re-raised
+* This helper MUST only be used for logically idempotent inserts
+* Using it for business-critical inserts may hide real bugs
 
 ---
 

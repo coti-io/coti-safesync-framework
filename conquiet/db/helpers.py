@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, Any, Mapping, Tuple
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.sql.elements import TextClause
 
 if TYPE_CHECKING:
@@ -117,6 +118,52 @@ def _validate_identifier(name: str, identifier_type: str = "identifier") -> str:
         raise ValueError(f"{identifier_type} {name!r} exceeds MySQL's 64-character limit")
     
     return name
+
+
+def insert_idempotent(
+    session: "DbSession",
+    sql: str | TextClause,
+    params: Mapping[str, Any],
+) -> bool:
+    """
+    Execute an INSERT and suppress duplicate-key errors.
+
+    Returns:
+        True  -> row was inserted
+        False -> row already existed (duplicate key)
+
+    Notes:
+    - Only MySQL duplicate-key errors are suppressed
+    - Any other IntegrityError or DB error MUST be re-raised
+
+    ⚠️ This helper MUST only be used for logically idempotent inserts.
+    Using it for business-critical inserts may hide real bugs.
+    """
+    try:
+        session.execute(sql, params)
+        return True
+    except IntegrityError as e:
+        # Check if this is a MySQL duplicate key error
+        # Error code 1062 = Duplicate entry
+        is_duplicate_key = False
+        
+        # Check error code if available (pymysql format)
+        if hasattr(e, "orig") and hasattr(e.orig, "args") and len(e.orig.args) > 0:
+            error_code = e.orig.args[0]
+            if error_code == 1062:
+                is_duplicate_key = True
+        
+        # Fallback: check error message
+        if not is_duplicate_key:
+            error_msg = str(e).lower()
+            if "duplicate entry" in error_msg:
+                is_duplicate_key = True
+        
+        if is_duplicate_key:
+            return False
+        
+        # Not a duplicate key error - re-raise
+        raise
 
 
 def occ_update(
