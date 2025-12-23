@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import time
+
 from sqlalchemy import text
 from ..session import DbSession
 from ..helpers import _validate_identifier
+from ..metrics import observe_lock_acquisition
 
 
 class RowLock:
@@ -86,6 +89,9 @@ class RowLock:
         Raises:
             RuntimeError: If DbSession is not active (not within a context manager)
         """
+        # Track lock acquisition start time for metrics
+        start_time = time.monotonic()
+        
         # Enforce active DbSession
         if self.session._conn is None:
             raise RuntimeError(
@@ -107,5 +113,18 @@ class RowLock:
         sql = f"SELECT * FROM {self.table} WHERE {where_sql} FOR UPDATE"
         
         stmt = text(sql)
-        return self.session.fetch_one(stmt, params)
+        result = self.session.fetch_one(stmt, params)
+        
+        # Emit metrics for lock acquisition (always success since SELECT ... FOR UPDATE succeeds)
+        try:
+            latency = time.monotonic() - start_time
+            observe_lock_acquisition(
+                strategy="row",
+                latency_s=latency,
+                success=True,
+            )
+        except Exception:
+            pass
+        
+        return result
 

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import time
+
 from sqlalchemy import text
 from ..session import DbSession
+from ..metrics import observe_lock_acquisition
 from ...errors import LockTimeoutError
 
 
@@ -59,6 +62,9 @@ class AdvisoryLock:
         Raises:
             LockTimeoutError: If lock cannot be acquired within timeout
         """
+        # Track lock acquisition start time for metrics
+        start_time = time.monotonic()
+        
         stmt = text("SELECT GET_LOCK(:lock_name, :timeout)")
         # Enforce active DbSession
         if self.session._conn is None:
@@ -70,11 +76,33 @@ class AdvisoryLock:
         )
 
         if res != 1:
+            # Emit metrics for failed lock acquisition
+            try:
+                latency = time.monotonic() - start_time
+                observe_lock_acquisition(
+                    strategy="advisory",
+                    latency_s=latency,
+                    success=False,
+                )
+            except Exception:
+                pass
             raise LockTimeoutError(
                 f"Failed to acquire advisory lock '{self.key}' within {self.timeout} seconds"
             )
 
         self._acquired = True
+        
+        # Emit metrics for successful lock acquisition
+        try:
+            latency = time.monotonic() - start_time
+            observe_lock_acquisition(
+                strategy="advisory",
+                latency_s=latency,
+                success=True,
+            )
+        except Exception:
+            pass
+        
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:

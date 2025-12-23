@@ -1,9 +1,69 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping, Tuple
 from sqlalchemy import text
-from .session import DbSession
+from sqlalchemy.sql.elements import TextClause
+
+if TYPE_CHECKING:
+    from .session import DbSession
+
+
+def _parse_sql_operation(sql: str | TextClause) -> Tuple[str, str]:
+    """
+    Parse SQL statement to extract table name and operation type.
+    
+    This is a heuristic parser for INSERT and UPDATE statements.
+    Returns ("unknown", "unknown") if parsing fails.
+    
+    Args:
+        sql: SQL statement as string or TextClause
+        
+    Returns:
+        Tuple of (table_name, op_type) where:
+        - table_name: Extracted table name or "unknown"
+        - op_type: "insert" or "update" or "unknown"
+    
+    Examples:
+        >>> _parse_sql_operation("INSERT INTO orders (id) VALUES (:id)")
+        ('orders', 'insert')
+        >>> _parse_sql_operation("UPDATE orders SET status = :status WHERE id = :id")
+        ('orders', 'update')
+        >>> _parse_sql_operation("SELECT * FROM orders")
+        ('unknown', 'unknown')
+    """
+    # Convert TextClause to string if needed
+    sql_str = sql.text if isinstance(sql, TextClause) else str(sql)
+    
+    # Normalize whitespace - replace multiple spaces/newlines with single space
+    sql_str = re.sub(r'\s+', ' ', sql_str.strip(), flags=re.MULTILINE)
+    
+    # Check for INSERT statements
+    # Pattern: INSERT [IGNORE] INTO [backtick]table_name[backtick] ...
+    # Handle both backticked and non-backticked table names
+    insert_match = re.match(
+        r'^\s*INSERT\s+(?:IGNORE\s+)?INTO\s+(?:`)?([a-zA-Z_][a-zA-Z0-9_]*)(?:`)?',
+        sql_str,
+        re.IGNORECASE
+    )
+    if insert_match:
+        table_name = insert_match.group(1)
+        return (table_name, "insert")
+    
+    # Check for UPDATE statements
+    # Pattern: UPDATE [backtick]table_name[backtick] SET ...
+    # Handle both backticked and non-backticked table names
+    update_match = re.match(
+        r'^\s*UPDATE\s+(?:`)?([a-zA-Z_][a-zA-Z0-9_]*)(?:`)?',
+        sql_str,
+        re.IGNORECASE
+    )
+    if update_match:
+        table_name = update_match.group(1)
+        return (table_name, "update")
+    
+    # If no match, return unknown
+    return ("unknown", "unknown")
 
 
 def _validate_identifier(name: str, identifier_type: str = "identifier") -> str:
@@ -60,7 +120,7 @@ def _validate_identifier(name: str, identifier_type: str = "identifier") -> str:
 
 
 def occ_update(
-    session: DbSession,
+    session: "DbSession",
     table: str,
     id_column: str,
     id_value: Any,

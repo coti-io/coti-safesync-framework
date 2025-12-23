@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import time
 from typing import Any, Mapping
 
 from sqlalchemy import text
 from sqlalchemy.engine import Engine, Connection
 from sqlalchemy.sql.elements import TextClause
+
+from .helpers import _parse_sql_operation
+from .metrics import observe_db_write
 
 
 class DbSession:
@@ -29,15 +33,23 @@ class DbSession:
         self.engine = engine
         self._conn: Connection | None = None
         self._tx = None
+        # Track execute() operations for metrics
+        self._execute_operations: list[dict[str, Any]] = []
 
     def __enter__(self) -> "DbSession":
         if self._conn is not None:
             raise RuntimeError("DbSession is already active; nested sessions are not allowed")
         self._conn = self.engine.connect()
         self._tx = self._conn.begin()
+        # Reset operation tracking for new session
+        self._execute_operations = []
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
+        # Determine transaction status for metrics
+        status = "error" if exc_type else "success"
+        end_time = time.monotonic()
+        
         try:
             if self._tx is not None:
                 if exc_type:
@@ -50,6 +62,25 @@ class DbSession:
 
             self._conn = None
             self._tx = None
+            
+            # Emit metrics for all tracked execute() operations
+            # Wrap in try-except to ensure metrics don't mask real errors
+            try:
+                for op in self._execute_operations:
+                    # Only emit metrics for INSERT/UPDATE operations (skip "unknown")
+                    if op["op_type"] not in ("insert", "update"):
+                        continue
+                    
+                    latency = end_time - op["start_time"]
+                    observe_db_write(
+                        table=op["table"],
+                        op_type=op["op_type"],
+                        status=status,
+                        latency_s=latency,
+                    )
+            except Exception:
+                # Silently ignore metric errors to avoid masking real exceptions
+                pass
 
         # propagate exceptions (if any)
         return False
@@ -67,6 +98,10 @@ class DbSession:
         """
         Execute a non-SELECT statement and return affected row count.
         """
+        # Track operation start time and metadata for metrics
+        start_time = time.monotonic()
+        table_name, op_type = _parse_sql_operation(sql)
+        
         conn = self._connection()
         stmt = text(sql) if isinstance(sql, str) else sql
         result = conn.execute(stmt, params)
@@ -75,6 +110,14 @@ class DbSession:
                 "execute() received None rowcount for statement. "
                 "This may indicate a DDL statement or unsupported operation type."
             )
+        
+        # Store operation metadata for metrics emission in __exit__()
+        self._execute_operations.append({
+            "start_time": start_time,
+            "table": table_name,
+            "op_type": op_type,
+        })
+        
         return int(result.rowcount)
 
     def execute_scalar(
