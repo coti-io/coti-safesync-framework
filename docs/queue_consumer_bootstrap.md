@@ -142,12 +142,14 @@ The QueueConsumer **MUST NOT**:
 
 The QueueConsumer **MUST** support an explicit `stop()` mechanism.
 
-Upon `stop()` (or SIGTERM):
+Upon `stop()`:
 
 * No new reads are initiated
 * In-flight messages remain pending
 * No automatic acknowledgment occurs
 * No reclaiming occurs
+
+SIGTERM handling is expected to be wired externally by the host process (e.g., signal handler calls `stop()`).
 
 Shutdown is **best-effort**.
 
@@ -277,6 +279,17 @@ This means:
 * Delivery is guaranteed, timeliness is not
 * Applications with strict latency requirements must implement periodic or dedicated recovery logic
 
+### 10.4 Explicit Recovery API
+
+The QueueConsumer provides `claim_stale()` as an explicit recovery API.
+
+This method:
+
+* Is **not** called automatically
+* Is **not** part of the hot path
+* Aligns with the "New messages > stale messages" priority model
+* Must be invoked explicitly by user code when recovery is desired
+
 ---
 
 ## 11. Template-Method Processing (Optional)
@@ -321,12 +334,14 @@ It **MUST NOT**:
 
 ### 12.2 Backlog Inspection
 
-Backlog and staleness inspection MAY be exposed as **explicit query methods** (e.g., `backlog_stats()`), but:
+Backlog and staleness inspection MAY be exposed as **explicit query methods** in the future (e.g., `backlog_stats()`), but:
 
 * Must be best-effort
 * Must be bounded
 * Must have no side effects
 * Must not run automatically
+
+**Note:** Such methods are not currently implemented. The `claim_stale()` method (Section 10.4) provides explicit recovery but does not expose backlog statistics.
 
 ---
 

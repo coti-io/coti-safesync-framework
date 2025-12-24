@@ -182,7 +182,6 @@ class RedisStreamsQueue:
                 # Result format: [(stream_name, [(entry_id, {field: value, ...}), ...])]
                 for stream_name, entries in result:
                     for entry_id, fields in entries:
-                        # Convert entry_id to string if needed
                         entry_id_str = entry_id.decode("utf-8") if isinstance(entry_id, bytes) else str(entry_id)
                         msg = self._parse_entry(entry_id_str, fields)
                         messages.append(msg)
@@ -256,13 +255,7 @@ class RedisStreamsQueue:
             QueueError: If Redis operation fails
         """
         try:
-            # Get pending messages using XPENDING range form: XPENDING <stream> <group> - + <count>
-            # xpending_range returns a list of dicts with the following keys:
-            # - "message_id": bytes or str, the Redis stream entry ID
-            # - "consumer": bytes or str, the consumer name that owns the pending message
-            # - "time_since_delivered": int, milliseconds since the message was delivered
-            # - "times_delivered": int, number of times the message has been delivered
-            # Format: [{"message_id": ..., "consumer": ..., "time_since_delivered": ..., "times_delivered": ...}, ...]
+            # Get pending messages; returns list of dicts with keys: message_id, consumer, time_since_delivered, times_delivered
             pending_info = self.redis.xpending_range(
                 name=self.config.stream_key,
                 groupname=self.config.consumer_group,
@@ -274,24 +267,18 @@ class RedisStreamsQueue:
             if not pending_info:
                 return []
 
-            # Filter entries by idle time and collect entry IDs
-            # Redis is authoritative on idle time - use time_since_delivered as-is
-            # Skip messages already owned by this consumer to avoid unnecessary churn
+            # Filter by idle time (Redis is authoritative), skip messages already owned by this consumer
             entry_ids_to_claim: List[str] = []
             for entry_info in pending_info:
-                # Assume dict format from xpending_range
                 entry_id = entry_info.get("message_id")
                 consumer = entry_info.get("consumer")
                 idle_ms = entry_info.get("time_since_delivered", 0)
 
-                # Skip messages already owned by this consumer
                 consumer_str = consumer.decode("utf-8") if isinstance(consumer, bytes) else str(consumer)
                 if consumer_str == self.config.consumer_name:
                     continue
 
-                # Only claim if idle time meets threshold
                 if entry_id and idle_ms >= min_idle_ms:
-                    # Convert entry_id to string if needed
                     entry_id_str = entry_id.decode("utf-8") if isinstance(entry_id, bytes) else str(entry_id)
                     entry_ids_to_claim.append(entry_id_str)
 
@@ -310,7 +297,6 @@ class RedisStreamsQueue:
 
             messages: List[QueueMessage] = []
             for entry_id, fields in claimed_entries:
-                # Convert entry_id to string if needed
                 entry_id_str = entry_id.decode("utf-8") if isinstance(entry_id, bytes) else str(entry_id)
                 msg = self._parse_entry(entry_id_str, fields)
                 messages.append(msg)

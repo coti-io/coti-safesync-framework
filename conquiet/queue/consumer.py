@@ -91,6 +91,7 @@ class QueueConsumer:
 
         Blocks using the configured block_ms when no messages are available.
         Stops yielding after stop() is called. Does not busy-loop when idle.
+        Propagates all exceptions.
 
         Yields:
             QueueMessage objects from the queue
@@ -135,8 +136,11 @@ class QueueConsumer:
         - No automatic acknowledgment occurs
         - No reclaiming occurs
 
-        stop() does not interrupt an in-progress blocking XREADGROUP; it takes
-        effect after block_ms timeout.
+        stop() does not interrupt an active blocking read; it takes effect after
+        block_ms timeout.
+
+        SIGTERM handling is expected to be wired externally (signal handler calls
+        stop()).
 
         Shutdown is best-effort. Messages delivered but not acknowledged
         remain pending and may be reclaimed by another consumer later.
@@ -161,13 +165,10 @@ class QueueConsumer:
 
         No retries. No swallowing exceptions.
 
-        ⚠️ QueueConsumer cannot guarantee exactly-once delivery.
-
         DB commit happens on DbSession.__exit__ (success case). ACK occurs after
-        commit. If ACK fails (Redis error), the message remains pending and will
-        be redelivered, causing duplicate processing. This is standard at-least-once
-        behavior. Therefore handlers MUST be idempotent or use DB constraints/locks/OCC
-        to handle duplicate processing safely.
+        commit. If ACK fails, the message remains pending and will be redelivered.
+        Handlers MUST be idempotent or use DB constraints/locks/OCC to handle
+        duplicate processing safely.
 
         Args:
             handler: User-provided function that processes a message within a
@@ -198,9 +199,13 @@ class QueueConsumer:
         """
         Claim stale messages that have been pending longer than the threshold.
 
-        This is a best-effort recovery mechanism, not part of the hot path.
-        Recovery prioritizes new messages over stale messages. Under continuous
-        load, stale messages may be delayed.
+        This is an explicit recovery API that:
+        - Is not called automatically
+        - Is not part of the hot path
+        - Aligns with the "New messages > stale messages" priority model
+
+        Must be invoked explicitly by user code when recovery is desired.
+        Under continuous load, stale messages may be delayed.
 
         Args:
             min_idle_ms: Minimum idle time in milliseconds for a message to be
