@@ -10,3 +10,10 @@ class QueueConfig:
     block_ms: int = 5_000
     max_read_count: int = 1
 
+    def __post_init__(self) -> None:
+        """Validate configuration parameters."""
+        if self.block_ms <= 0:
+            raise ValueError(
+                "block_ms must be > 0; Redis interprets 0 as infinite blocking"
+            )
+

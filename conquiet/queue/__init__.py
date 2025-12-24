@@ -8,7 +8,7 @@ from .redis_streams import RedisStreamsQueue
 __all__ = [
     "QueueConfig",
     "QueueMessage",
-    "QueueConsumer",
     "RedisStreamsQueue",
+    "QueueConsumer",
 ]
 

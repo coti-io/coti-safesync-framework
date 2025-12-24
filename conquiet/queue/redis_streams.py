@@ -5,6 +5,7 @@ import time
 from typing import Any, Dict, List
 
 from redis import Redis
+from redis.exceptions import RedisError
 
 from ..config import QueueConfig
 from ..errors import QueueError
@@ -159,10 +160,8 @@ class RedisStreamsQueue:
             List of QueueMessage objects (may be empty)
 
         Raises:
-            QueueError: If Redis operation fails, block_ms is None, or block_ms is 0
+            QueueError: If Redis operation fails or block_ms is 0
         """
-        if block_ms is None:
-            raise QueueError("block_ms cannot be None; use a positive integer to prevent busy loops")
         if block_ms == 0:
             raise QueueError("block_ms cannot be 0; Redis interprets 0 as infinite blocking")
 
@@ -190,11 +189,18 @@ class RedisStreamsQueue:
 
             # Emit metrics only on successful read
             # Note: Empty reads are intentional and valid; latency includes blocking time
+            # Metrics are wrapped in try/except in the metrics module and never raise
             latency = time.monotonic() - start_time
             observe_queue_read(self.config.stream_key, len(messages), latency)
 
             return messages
+        except QueueError:
+            # Don't double-wrap QueueError
+            raise
+        except RedisError as exc:
+            raise QueueError(f"Failed to read messages: {exc}") from exc
         except Exception as exc:
+            # Catch any other unexpected exceptions and wrap them
             raise QueueError(f"Failed to read messages: {exc}") from exc
 
     def ack(self, msg: QueueMessage) -> None:
@@ -216,8 +222,15 @@ class RedisStreamsQueue:
                 msg.id,
             )
             # Emit metrics only on successful ack
+            # Metrics are wrapped in try/except in the metrics module and never raise
             observe_queue_ack(self.config.stream_key)
+        except QueueError:
+            # Don't double-wrap QueueError
+            raise
+        except RedisError as exc:
+            raise QueueError(f"Failed to acknowledge message: {exc}") from exc
         except Exception as exc:
+            # Catch any other unexpected exceptions and wrap them
             raise QueueError(f"Failed to acknowledge message: {exc}") from exc
 
     def claim_stale(
@@ -244,7 +257,12 @@ class RedisStreamsQueue:
         """
         try:
             # Get pending messages using XPENDING range form: XPENDING <stream> <group> - + <count>
-            # Returns list of dicts: [{"message_id": ..., "consumer": ..., "time_since_delivered": ..., "times_delivered": ...}, ...]
+            # xpending_range returns a list of dicts with the following keys:
+            # - "message_id": bytes or str, the Redis stream entry ID
+            # - "consumer": bytes or str, the consumer name that owns the pending message
+            # - "time_since_delivered": int, milliseconds since the message was delivered
+            # - "times_delivered": int, number of times the message has been delivered
+            # Format: [{"message_id": ..., "consumer": ..., "time_since_delivered": ..., "times_delivered": ...}, ...]
             pending_info = self.redis.xpending_range(
                 name=self.config.stream_key,
                 groupname=self.config.consumer_group,
@@ -298,10 +316,17 @@ class RedisStreamsQueue:
                 messages.append(msg)
 
             # Emit metrics only on successful claim
+            # Metrics are wrapped in try/except in the metrics module and never raise
             if messages:
                 observe_queue_claimed(self.config.stream_key, len(messages))
 
             return messages
+        except QueueError:
+            # Don't double-wrap QueueError
+            raise
+        except RedisError as exc:
+            raise QueueError(f"Failed to claim stale messages: {exc}") from exc
         except Exception as exc:
+            # Catch any other unexpected exceptions and wrap them
             raise QueueError(f"Failed to claim stale messages: {exc}") from exc
 

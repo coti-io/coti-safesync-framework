@@ -45,44 +45,50 @@ swallow user exceptions
 UNDER NO CIRCUMSTANCES SHOULD THIS LOOP RETRY A MESSAGE.
 ```
 
-    def run(
-        self,
-        *,
-        handler: Callable[[QueueMessage, DbTx], None],
-        db_factory: DbFactory,
-    ) -> None:
-        """
-        Template-method runner:
-        1) fetch
-        2) handler(msg, tx)
-        3) commit
-        4) ack
+   def run(
+    self,
+    *,
+    handler: Callable[[QueueMessage, DbSession], None],
+    engine: Engine,
+) -> None:
+    """
+    Template-method runner:
+    1) fetch message
+    2) open DbSession (one transaction)
+    3) handler(msg, session)
+    4) commit (on DbSession exit)
+    5) ack message
 
-        - Does not retry
-        - Does not swallow user exceptions (re-raises)
-        - Guarantees rollback on exceptions where possible
-        - Redis connection failures propagate as QueueError
-        """
-        while not self._stopping:
-            msg = self.next(block_ms=self.config.block_ms)
-            if msg is None:
-                continue
+    No retries.
+    No swallowing exceptions.
+    """
+    while not self._stopping:
+        msg = self.next(block_ms=self.config.block_ms)
+        if msg is None:
+            continue
 
-            tx = db_factory.begin()
-            try:
-                handler(msg, tx)
-                tx.commit()
-            except Exception:
-                # Best-effort rollback; do not swallow original exception.
-                try:
-                    tx.rollback()
-                finally:
-                    raise
-            else:
-                # IMPORTANT: if ack fails (e.g., Redis down), it raises QueueError and propagates.
-                # Commit already happened -> safe duplicates; user must ensure idempotent effects.
-                self.ack(msg)
+        try:
+            with DbSession(engine) as session:
+                handler(msg, session)
+        except Exception:
+            # DbSession rolled back automatically
+            # Message NOT acked → remains pending
+            raise
+        else:
+            # Commit already happened
+            self.ack(msg)
 ```
+
+## 1.2 Alignment with Database Layer
+QueueConsumer integrates directly with Conquiet’s DbSession.
+
+A DbSession represents a single database transaction and must be scoped
+to a single message handling attempt.
+
+Retry loops (including OCC retries) MUST NOT occur inside a single DbSession.
+
+This mirrors the database correctness model and ensures predictable locking
+and isolation behavior.
 
 
 ## 2. Design Principles
@@ -278,7 +284,7 @@ This means:
 An optional higher-level runner MAY be provided:
 
 ```python
-def run(handler, db_factory)
+def run(handler, Engine)
 ```
 
 This runner MAY:

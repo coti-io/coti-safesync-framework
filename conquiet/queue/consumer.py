@@ -1,74 +1,49 @@
 from __future__ import annotations
 
 import threading
-from collections.abc import Callable, Iterator
-from typing import Optional
+from typing import Callable, Iterator, List, Optional
 
 from redis import Redis
+from sqlalchemy.engine import Engine
 
 from ..config import QueueConfig
-from ..db.tx import DbFactory, DbTx
-from ..errors import QueueError
+from ..db.session import DbSession
 from .models import QueueMessage
 from .redis_streams import RedisStreamsQueue
 
 
 class QueueConsumer:
     """
-    High-level QueueConsumer API for consuming messages from a Redis Streams-based queue.
-    
-    The QueueConsumer is a control-flow abstraction, not a delivery guarantee mechanism.
-    It coordinates:
+    High-level API for consuming messages from a Redis Streams-based queue.
+
+    QueueConsumer is a control-flow abstraction that coordinates:
     - Message retrieval
     - Shutdown behavior
     - Delivery to user code
-    
+
     It deliberately avoids retries, buffering, fairness, and automatic recovery.
-    
-    Design Principles:
-    - At-least-once delivery
-    - Explicit acknowledgment
-    - Best-effort recovery
-    - Throughput-first
-    - No hidden retries
-    - No background work
-    - No internal state machines
-    
     Failures are surfaced, not hidden.
-    
+
+    ⚠️ QueueConsumer provides at-least-once delivery, not exactly-once.
+    Messages may be redelivered if ACK fails after commit, requiring idempotent handlers.
+
     Usage:
         consumer = QueueConsumer(redis_client, config)
-        
-        # Option 1: Manual control
-        while True:
-            msg = consumer.next()
-            if msg is None:
-                continue
-            # Process msg...
-            consumer.ack(msg)
-        
-        # Option 2: Iterator
         for msg in consumer.iter_messages():
-            # Process msg...
+            # Process message
             consumer.ack(msg)
-        
-        # Option 3: Template method
-        def handler(msg: QueueMessage, tx: DbTx) -> None:
-            tx.execute("INSERT INTO ...", {...})
-        
-        consumer.run(handler=handler, db_factory=DbFactory(engine))
     """
 
     def __init__(self, redis: Redis, config: QueueConfig) -> None:
         """
         Initialize the QueueConsumer.
-        
+
         Args:
             redis: Redis client instance
             config: Queue configuration
-            
+
         Raises:
-            QueueError: If consumer group creation fails (except BUSYGROUP)
+            QueueError: If consumer group creation fails (from RedisStreamsQueue)
         """
         self.config = config
         self._queue = RedisStreamsQueue(redis, config)
@@ -77,87 +52,74 @@ class QueueConsumer:
     def next(self, block_ms: Optional[int] = None) -> Optional[QueueMessage]:
         """
         Fetch at most one message from the queue.
-        
-        Returns at most one message, blocking if necessary. Returns None
-        if no message is available after the blocking period.
-        
-        Rules:
-        - Returns at most one message
-        - Returns None if no message is available
-        - Must block using Redis Streams (XREADGROUP)
-        - Must not spin without blocking
-        - Must not drop messages
-        - Must propagate Redis errors as QueueError
-        
+
+        Blocks using Redis Streams XREADGROUP if no message is available.
+        Returns None if no message is available after the blocking period.
+
+        Stop is best-effort: if a blocking read is in progress, `stop()` takes
+        effect after the block timeout.
+
         Args:
             block_ms: Maximum time to block in milliseconds. If None, uses
-                     config.block_ms. Must be a positive integer (> 0).
-        
+                     the configured default from config.block_ms.
+
         Returns:
-            QueueMessage if available, None otherwise
-            
+            A QueueMessage if available, None if no message after blocking.
+
         Raises:
-            QueueError: If Redis operation fails or block_ms is invalid
+            QueueError: If Redis operation fails
         """
-        # Check if stopping before blocking
+        # Use configured default if block_ms is not provided
+        if block_ms is None:
+            block_ms = self.config.block_ms
+
+        # Best-effort check: don't start a new read if we're stopping
         if self._stopping.is_set():
             return None
-        
-        # Use configured block_ms if not provided
-        actual_block_ms = block_ms if block_ms is not None else self.config.block_ms
-        
-        # Validate block_ms
-        if not isinstance(actual_block_ms, int) or actual_block_ms <= 0:
-            raise QueueError("block_ms must be a positive integer (> 0)")
-        
-        # Read messages (at most one per spec)
-        messages = self._queue.read(block_ms=actual_block_ms, count=1)
-        
-        if not messages:
-            return None
-        
-        # Return first message (should be only one due to count=1)
-        return messages[0]
+
+        # Read at most one message
+        messages = self._queue.read(block_ms=block_ms, count=1)
+
+        # Return first message if available, None otherwise
+        if messages:
+            return messages[0]
+        return None
 
     def iter_messages(self) -> Iterator[QueueMessage]:
         """
         Iterator that yields messages until stopped.
-        
-        Behavior:
-        - Blocks using configured block_ms
-        - Yields messages until stopped
-        - Does not busy-loop when idle
-        - Stops yielding after stop() is observed
-        - Propagates all exceptions
-        
+
+        Blocks using the configured block_ms when no messages are available.
+        Stops yielding after stop() is called. Does not busy-loop when idle.
+
         Yields:
-            QueueMessage instances
-            
+            QueueMessage objects from the queue
+
         Raises:
             QueueError: If Redis operation fails
         """
         while not self._stopping.is_set():
             msg = self.next(block_ms=self.config.block_ms)
             if msg is None:
-                # Continue loop to check _stopping again
+                # No message available, continue loop (will block on next iteration)
                 continue
             yield msg
 
     def ack(self, msg: QueueMessage) -> None:
         """
         Explicitly acknowledge a message.
-        
-        Rules:
-        - Must be called explicitly by user code
-        - Must not be automatic
-        - Failure to acknowledge implies retry via staleness
-        - Redis failures must propagate as QueueError
-        
-        The QueueConsumer MUST NOT acknowledge messages on behalf of user code.
-        
+
+        Acknowledging a message removes it from the pending list in Redis.
+        This must be called explicitly by user code after successfully processing
+        a message. Failure to acknowledge implies the message will remain pending
+        and may be reclaimed by another consumer later.
+
+        Ack may be called even after stop() was requested to allow draining
+        in-flight work.
+
         Args:
             msg: The QueueMessage to acknowledge
-            
+
         Raises:
             QueueError: If Redis operation fails
         """
@@ -166,13 +128,16 @@ class QueueConsumer:
     def stop(self) -> None:
         """
         Signal graceful shutdown.
-        
-        Upon stop():
-        - No new reads are initiated
+
+        After stop() is called:
+        - No new reads are initiated (best-effort)
         - In-flight messages remain pending
         - No automatic acknowledgment occurs
         - No reclaiming occurs
-        
+
+        stop() does not interrupt an in-progress blocking XREADGROUP; it takes
+        effect after block_ms timeout.
+
         Shutdown is best-effort. Messages delivered but not acknowledged
         remain pending and may be reclaimed by another consumer later.
         """
@@ -181,87 +146,76 @@ class QueueConsumer:
     def run(
         self,
         *,
-        handler: Callable[[QueueMessage, DbTx], None],
-        db_factory: DbFactory,
+        handler: Callable[[QueueMessage, DbSession], None],
+        engine: Engine,
     ) -> None:
         """
-        Template-method runner:
-        1) fetch
-        2) handler(msg, tx)
-        3) commit
-        4) ack
-        
-        - Does not retry
-        - Does not swallow user exceptions (re-raises)
-        - Guarantees rollback on exceptions where possible
-        - Redis connection failures propagate as QueueError
-        
-        This is a non-normative reference implementation. Implementations MAY:
-        - rename this function
-        - split it into helpers
-        - inline it into application code
-        
-        Implementations MUST NOT:
-        - change the ordering
-        - add retries
-        - acknowledge before commit
-        - swallow user exceptions
-        
-        UNDER NO CIRCUMSTANCES SHOULD THIS LOOP RETRY A MESSAGE.
-        
+        Template-method runner.
+
+        Executes the following control flow for each message:
+        1) fetch message
+        2) open DbSession (one transaction)
+        3) handler(msg, session)
+        4) commit (on DbSession exit)
+        5) ack message
+
+        No retries. No swallowing exceptions.
+
+        ⚠️ QueueConsumer cannot guarantee exactly-once delivery.
+
+        DB commit happens on DbSession.__exit__ (success case). ACK occurs after
+        commit. If ACK fails (Redis error), the message remains pending and will
+        be redelivered, causing duplicate processing. This is standard at-least-once
+        behavior. Therefore handlers MUST be idempotent or use DB constraints/locks/OCC
+        to handle duplicate processing safely.
+
         Args:
-            handler: User-provided handler function that processes messages
-            db_factory: Factory for creating database transactions
-            
+            handler: User-provided function that processes a message within a
+                    database transaction. Receives the message and DbSession.
+            engine: SQLAlchemy Engine for creating database sessions.
+
         Raises:
-            QueueError: If Redis operation fails
-            Any exception raised by handler is propagated
+            QueueError: If Redis operation fails (including ACK failures after commit)
+            Any exception raised by the handler (never caught or swallowed)
         """
         while not self._stopping.is_set():
             msg = self.next(block_ms=self.config.block_ms)
             if msg is None:
                 continue
 
-            tx = db_factory.begin()
             try:
-                handler(msg, tx)
-                tx.commit()
+                with DbSession(engine) as session:
+                    handler(msg, session)
             except Exception:
-                # Best-effort rollback; do not swallow original exception.
-                try:
-                    tx.rollback()
-                finally:
-                    raise
+                # DbSession rolled back automatically
+                # Message NOT acked → remains pending
+                raise
             else:
-                # IMPORTANT: if ack fails (e.g., Redis down), it raises QueueError and propagates.
-                # Commit already happened -> safe duplicates; user must ensure idempotent effects.
+                # Commit already happened
                 self.ack(msg)
 
-    def recover_stale(self, min_idle_ms: Optional[int] = None, count: int = 1) -> list[QueueMessage]:
+    def claim_stale(self, min_idle_ms: Optional[int] = None) -> List[QueueMessage]:
         """
-        Claim stale messages that have been pending longer than min_idle_ms.
-        
+        Claim stale messages that have been pending longer than the threshold.
+
         This is a best-effort recovery mechanism, not part of the hot path.
-        The QueueConsumer prioritizes new messages over stale messages.
-        
-        Recovery requires explicit use of XPENDING and XCLAIM. This method
-        provides a convenient way to invoke recovery, but it is optional
-        and should be called periodically by user code, not automatically.
-        
-        By default, recovers at most one message to avoid buffering beyond
-        one message. Call repeatedly if you want to drain more stale messages.
-        
+        Recovery prioritizes new messages over stale messages. Under continuous
+        load, stale messages may be delayed.
+
         Args:
-            min_idle_ms: Minimum idle time in milliseconds for a message to be claimed.
-                        If None, uses config.claim_idle_ms.
-            count: Maximum number of messages to claim (default 1)
-        
+            min_idle_ms: Minimum idle time in milliseconds for a message to be
+                        claimed. If None, uses the configured default from
+                        config.claim_idle_ms.
+
         Returns:
             List of claimed QueueMessage objects (may be empty)
-            
+
         Raises:
             QueueError: If Redis operation fails
         """
-        actual_min_idle_ms = min_idle_ms if min_idle_ms is not None else self.config.claim_idle_ms
-        return self._queue.claim_stale(min_idle_ms=actual_min_idle_ms, count=count)
+        # Use configured default if min_idle_ms is not provided
+        if min_idle_ms is None:
+            min_idle_ms = self.config.claim_idle_ms
+
+        return self._queue.claim_stale(min_idle_ms=min_idle_ms)
 

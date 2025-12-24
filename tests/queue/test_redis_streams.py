@@ -137,13 +137,6 @@ class TestRead:
         assert elapsed >= 0.4  # At least 400ms
         assert messages == []
 
-    def test_read_rejects_none_block_ms(self, redis_client: Redis, queue_config: QueueConfig) -> None:
-        """Test that read raises QueueError when block_ms is None."""
-        queue = RedisStreamsQueue(redis_client, queue_config)
-
-        with pytest.raises(QueueError, match="block_ms cannot be None"):
-            queue.read(block_ms=None, count=1)  # type: ignore[arg-type]
-
     def test_read_rejects_zero_block_ms(self, redis_client: Redis, queue_config: QueueConfig) -> None:
         """Test that read raises QueueError when block_ms is 0."""
         queue = RedisStreamsQueue(redis_client, queue_config)

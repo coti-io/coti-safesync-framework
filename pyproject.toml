@@ -63,5 +63,6 @@ addopts = "--cov=conquiet --cov-report=xml --cov-report=html --cov-report=term"
 markers = [
     "concurrency: multi-process concurrency invariant tests (run with -m concurrency)",
     "demo: probabilistic demonstrations of unsafety (run with -m demo)",
+    "queue_integration: queue integration tests requiring Redis and MySQL",
 ]
 

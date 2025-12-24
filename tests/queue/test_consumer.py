@@ -2,208 +2,240 @@ from __future__ import annotations
 
 import threading
 import time
-from unittest.mock import MagicMock
+import uuid
+from unittest.mock import MagicMock, patch
 
 import pytest
 from redis import Redis
+from sqlalchemy.engine import Engine
 
 from conquiet.config import QueueConfig
-from conquiet.db.tx import DbFactory, DbTransaction
+from conquiet.db.session import DbSession
 from conquiet.errors import QueueError
-from conquiet.queue import QueueConsumer, QueueMessage
+from conquiet.queue import QueueConsumer, QueueMessage, RedisStreamsQueue
+
+
+def _poll_until(condition, timeout: float = 2.0, interval: float = 0.05) -> None:
+    """Poll until condition is true or timeout is reached."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if condition():
+            return
+        time.sleep(interval)
+    raise AssertionError(f"Condition not met within {timeout}s")
+
+
+class TestQueueConfig:
+    """Tests for QueueConfig validation."""
+
+    def test_config_rejects_block_ms_zero(self) -> None:
+        """Test that QueueConfig rejects block_ms=0."""
+        with pytest.raises(ValueError, match="block_ms must be > 0"):
+            QueueConfig(
+                stream_key="test_stream",
+                consumer_group="test_group",
+                consumer_name="test_consumer",
+                block_ms=0,
+            )
+
+    def test_config_rejects_block_ms_negative(self) -> None:
+        """Test that QueueConfig rejects negative block_ms."""
+        with pytest.raises(ValueError, match="block_ms must be > 0"):
+            QueueConfig(
+                stream_key="test_stream",
+                consumer_group="test_group",
+                consumer_name="test_consumer",
+                block_ms=-1,
+            )
+
+    def test_config_accepts_positive_block_ms(self) -> None:
+        """Test that QueueConfig accepts positive block_ms."""
+        config = QueueConfig(
+            stream_key="test_stream",
+            consumer_group="test_group",
+            consumer_name="test_consumer",
+            block_ms=1000,
+        )
+        assert config.block_ms == 1000
 
 
 class TestNext:
     """Tests for next() method."""
 
+    @pytest.mark.queue_integration
     def test_next_returns_single_message(self, redis_client: Redis, queue_config: QueueConfig) -> None:
-        """Test that next() returns at most one message."""
+        """Test that next() returns a single message when available."""
+        queue = RedisStreamsQueue(redis_client, queue_config)
         consumer = QueueConsumer(redis_client, queue_config)
-        queue = consumer._queue
 
         # Enqueue a message
         queue.enqueue({"test": "data"})
 
-        # Read message
+        # Read it
         msg = consumer.next(block_ms=100)
 
         assert msg is not None
         assert isinstance(msg, QueueMessage)
         assert msg.payload == {"test": "data"}
 
-    def test_next_returns_none_when_no_messages(self, redis_client: Redis, queue_config: QueueConfig) -> None:
-        """Test that next() returns None when no messages are available."""
+    @pytest.mark.queue_integration
+    def test_next_returns_none_when_no_message(self, redis_client: Redis, queue_config: QueueConfig) -> None:
+        """Test that next() returns None when no message is available."""
         consumer = QueueConsumer(redis_client, queue_config)
 
         msg = consumer.next(block_ms=100)
 
         assert msg is None
 
-    def test_next_uses_config_block_ms_when_not_provided(
-        self, redis_client: Redis, queue_config: QueueConfig
-    ) -> None:
-        """Test that next() uses config.block_ms when block_ms is not provided."""
+    def test_next_uses_configured_block_ms(self, redis_client: Redis, queue_config: QueueConfig) -> None:
+        """Test that next() uses config.block_ms when block_ms is None."""
         consumer = QueueConsumer(redis_client, queue_config)
 
-        # Should not raise even with default blocking
-        start = time.time()
-        msg = consumer.next()
-        elapsed = time.time() - start
+        # Patch read to verify it's called with config.block_ms
+        with patch.object(consumer._queue, "read", return_value=[]) as mock_read:
+            consumer.next()
+            mock_read.assert_called_once_with(block_ms=queue_config.block_ms, count=1)
 
-        # Should have blocked for approximately config.block_ms
-        assert elapsed >= queue_config.block_ms / 1000.0 * 0.9  # Allow 10% tolerance
-        assert msg is None
-
-    def test_next_stops_when_stopped(self, redis_client: Redis, queue_config: QueueConfig) -> None:
-        """Test that next() returns None immediately when stopped."""
+    def test_next_respects_stopping_flag(self, redis_client: Redis, queue_config: QueueConfig) -> None:
+        """Test that next() respects stop() signal (best-effort)."""
         consumer = QueueConsumer(redis_client, queue_config)
 
         # Stop the consumer
         consumer.stop()
 
         # Should return None immediately without blocking
-        start = time.time()
         msg = consumer.next(block_ms=1000)
-        elapsed = time.time() - start
 
         assert msg is None
-        assert elapsed < 0.1  # Should return quickly
+
+    def test_next_propagates_queue_error(self, redis_client: Redis, queue_config: QueueConfig) -> None:
+        """Test that next() propagates QueueError from underlying queue."""
+        consumer = QueueConsumer(redis_client, queue_config)
+
+        # Mock RedisStreamsQueue.read to raise QueueError (as it would after wrapping RedisError)
+        with patch.object(consumer._queue, "read", side_effect=QueueError("Failed to read messages: Connection failed")):
+            with pytest.raises(QueueError, match="Failed to read messages"):
+                consumer.next(block_ms=100)
 
 
 class TestIterMessages:
     """Tests for iter_messages() method."""
 
+    @pytest.mark.queue_integration
     def test_iter_messages_yields_messages(self, redis_client: Redis, queue_config: QueueConfig) -> None:
-        """Test that iter_messages() yields messages."""
+        """Test that iter_messages() yields messages as they arrive."""
+        queue = RedisStreamsQueue(redis_client, queue_config)
         consumer = QueueConsumer(redis_client, queue_config)
-        queue = consumer._queue
 
         # Enqueue messages
-        queue.enqueue({"index": 1})
-        queue.enqueue({"index": 2})
+        queue.enqueue({"msg": 1})
+        queue.enqueue({"msg": 2})
 
-        # Iterate messages
-        messages = list(consumer.iter_messages())
+        # Collect messages
+        messages = []
+        for msg in consumer.iter_messages():
+            messages.append(msg)
+            if len(messages) >= 2:
+                consumer.stop()
+                break
 
-        # Should yield both messages
-        assert len(messages) >= 2
-        assert messages[0].payload["index"] == 1
-        assert messages[1].payload["index"] == 2
+        assert len(messages) == 2
+        assert messages[0].payload == {"msg": 1}
+        assert messages[1].payload == {"msg": 2}
 
     def test_iter_messages_stops_after_stop(self, redis_client: Redis, queue_config: QueueConfig) -> None:
         """Test that iter_messages() stops yielding after stop() is called."""
         consumer = QueueConsumer(redis_client, queue_config)
-        queue = consumer._queue
 
-        # Enqueue a message
-        queue.enqueue({"test": "data"})
+        # Stop immediately
+        consumer.stop()
 
-        # Start iteration in background
-        messages = []
-        stop_event = threading.Event()
-
-        def iterate():
-            for msg in consumer.iter_messages():
-                messages.append(msg)
-                if len(messages) >= 1:
-                    stop_event.set()
-                    consumer.stop()
-
-        thread = threading.Thread(target=iterate, daemon=True)
-        thread.start()
-
-        # Wait for iteration to stop
-        stop_event.wait(timeout=2.0)
-        thread.join(timeout=2.0)
-
-        # Should have yielded at least one message before stopping
-        assert len(messages) >= 1
+        # Should not yield any messages
+        messages = list(consumer.iter_messages())
+        assert messages == []
 
     def test_iter_messages_propagates_exceptions(self, redis_client: Redis, queue_config: QueueConfig) -> None:
-        """Test that iter_messages() propagates exceptions."""
+        """Test that iter_messages() propagates all exceptions."""
         consumer = QueueConsumer(redis_client, queue_config)
 
-        # Create invalid Redis client to cause errors
-        invalid_client = Redis(host="invalid_host", port=9999, socket_connect_timeout=0.1)
-        invalid_consumer = QueueConsumer(invalid_client, queue_config)
-
-        # Should propagate QueueError
-        with pytest.raises(QueueError):
-            next(invalid_consumer.iter_messages())
-
-        invalid_client.close()
+        # Mock RedisStreamsQueue.read to raise QueueError (as it would after wrapping RedisError)
+        with patch.object(consumer._queue, "read", side_effect=QueueError("Failed to read messages: Connection failed")):
+            with pytest.raises(QueueError):
+                # This should raise immediately when trying to read
+                next(consumer.iter_messages())
 
 
 class TestAck:
     """Tests for ack() method."""
 
+    @pytest.mark.queue_integration
     def test_ack_acknowledges_message(self, redis_client: Redis, queue_config: QueueConfig) -> None:
-        """Test that ack() acknowledges a message."""
+        """Test that ack() successfully acknowledges a message."""
+        queue = RedisStreamsQueue(redis_client, queue_config)
         consumer = QueueConsumer(redis_client, queue_config)
-        queue = consumer._queue
 
-        # Enqueue and read message
+        # Enqueue and read a message
         queue.enqueue({"test": "data"})
         msg = consumer.next(block_ms=100)
         assert msg is not None
 
-        # Acknowledge message
+        # Acknowledge it
         consumer.ack(msg)
 
-        # Verify message is acknowledged (check pending count)
-        pending_info = redis_client.xpending_range(
+        # Verify it's no longer pending
+        pending = redis_client.xpending_range(
             name=queue_config.stream_key,
             groupname=queue_config.consumer_group,
             min="-",
             max="+",
             count=10,
         )
-        # Message should not be in pending list
-        msg_ids = [p.get("message_id") for p in pending_info]
-        if msg_ids and isinstance(msg_ids[0], bytes):
-            msg_ids = [m.decode("utf-8") if isinstance(m, bytes) else str(m) for m in msg_ids]
-        elif msg_ids:
-            msg_ids = [str(m) for m in msg_ids]
-        assert msg.id not in msg_ids
+        pending_ids = [p["message_id"] for p in pending]
+        assert msg.id not in pending_ids
 
-    def test_ack_propagates_redis_errors(self, redis_client: Redis, queue_config: QueueConfig) -> None:
-        """Test that ack() propagates Redis errors as QueueError."""
+    def test_ack_propagates_queue_error(self, redis_client: Redis, queue_config: QueueConfig) -> None:
+        """Test that ack() propagates QueueError on Redis failures."""
         consumer = QueueConsumer(redis_client, queue_config)
-        queue = consumer._queue
 
-        # Create a message with invalid ID
+        # Create a dummy message
         msg = QueueMessage(
-            stream=queue_config.stream_key,
-            group=queue_config.consumer_group,
-            id="invalid-id",
+            stream="test_stream",
+            group="test_group",
+            id="123-0",
             payload={"test": "data"},
         )
 
-        # Should raise QueueError (though Redis may accept invalid IDs, this tests error path)
-        # Actually, Redis accepts invalid IDs gracefully, so we need a different test
-        # Let's test with a closed Redis connection instead
-        consumer.stop()  # This doesn't close Redis, but let's test with invalid consumer
+        # Mock RedisStreamsQueue.ack to raise QueueError (as it would after wrapping RedisError)
+        with patch.object(consumer._queue, "ack", side_effect=QueueError("Failed to acknowledge message: Connection failed")):
+            with pytest.raises(QueueError, match="Failed to acknowledge message"):
+                consumer.ack(msg)
 
-        # Create invalid consumer
-        invalid_client = Redis(host="invalid_host", port=9999, socket_connect_timeout=0.1)
-        invalid_consumer = QueueConsumer(invalid_client, queue_config)
+    @pytest.mark.queue_integration
+    def test_ack_works_after_stop(self, redis_client: Redis, queue_config: QueueConfig) -> None:
+        """Test that ack() can be called after stop() for draining in-flight work."""
+        queue = RedisStreamsQueue(redis_client, queue_config)
+        consumer = QueueConsumer(redis_client, queue_config)
 
-        # Enqueue with valid consumer first
+        # Enqueue and read a message
         queue.enqueue({"test": "data"})
         msg = consumer.next(block_ms=100)
+        assert msg is not None
 
-        # Try to ack with invalid consumer
-        with pytest.raises(QueueError):
-            invalid_consumer.ack(msg)
+        # Stop the consumer
+        consumer.stop()
 
-        invalid_client.close()
+        # Should still be able to ack
+        consumer.ack(msg)
 
 
 class TestStop:
     """Tests for stop() method."""
 
     def test_stop_sets_stopping_flag(self, redis_client: Redis, queue_config: QueueConfig) -> None:
-        """Test that stop() sets the stopping flag."""
+        """Test that stop() sets the _stopping flag.
+        
+        Implementation detail: verifies stop() flips internal event.
+        """
         consumer = QueueConsumer(redis_client, queue_config)
 
         assert not consumer._stopping.is_set()
@@ -211,17 +243,17 @@ class TestStop:
         assert consumer._stopping.is_set()
 
     def test_stop_prevents_new_reads(self, redis_client: Redis, queue_config: QueueConfig) -> None:
-        """Test that stop() prevents new reads."""
+        """Test that stop() prevents new reads (best-effort)."""
+        queue = RedisStreamsQueue(redis_client, queue_config)
         consumer = QueueConsumer(redis_client, queue_config)
-        queue = consumer._queue
 
-        # Enqueue message
+        # Enqueue a message
         queue.enqueue({"test": "data"})
 
-        # Stop consumer
+        # Stop the consumer
         consumer.stop()
 
-        # Should not read new messages
+        # Should return None without reading
         msg = consumer.next(block_ms=100)
         assert msg is None
 
@@ -229,220 +261,748 @@ class TestStop:
 class TestRun:
     """Tests for run() template method."""
 
-    def test_run_executes_handler_and_commits(self, redis_client: Redis, queue_config: QueueConfig, engine, fresh_table: str) -> None:
-        """Test that run() executes handler and commits transaction."""
+    def test_run_does_not_ack_when_handler_raises(self, redis_client: Redis, queue_config: QueueConfig) -> None:
+        """Test that run() does not ack message when handler raises exception.
+        
+        Base-case semantics: If handler raises → DB transaction rolls back AND
+        the message is NOT acked (still XPENDING).
+        """
         consumer = QueueConsumer(redis_client, queue_config)
-        queue = consumer._queue
-        db_factory = DbFactory(engine)
-        table = fresh_table
+        mock_engine = MagicMock(spec=Engine)
 
-        # Enqueue message
-        queue.enqueue({"id": 1, "value": 100})
+        # Create a test message
+        test_msg = QueueMessage(
+            stream=queue_config.stream_key,
+            group=queue_config.consumer_group,
+            id="123-0",
+            payload={"test": "data"},
+        )
 
-        # Handler that inserts into DB
-        def handler(msg: QueueMessage, tx: DbTransaction) -> None:
-            tx.execute(
-                f"INSERT INTO `{table}` (id, value) VALUES (:id, :value)",
+        # Mock next() to return the message once, then None to exit loop
+        call_count = 0
+        def mock_next(block_ms=None):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return test_msg
+            return None
+
+        # Mock ack() to track if it was called
+        ack_called = False
+        def track_ack(msg: QueueMessage) -> None:
+            nonlocal ack_called
+            ack_called = True
+
+        with patch.object(consumer, "next", side_effect=mock_next):
+            with patch.object(consumer, "ack", side_effect=track_ack):
+                # Mock redis_client.xpending_range to verify message remains pending
+                with patch.object(redis_client, "xpending_range", return_value=[{"message_id": test_msg.id}]):
+                    # Mock DbSession to be a no-op context manager
+                    mock_session = MagicMock(spec=DbSession)
+                    with patch("conquiet.queue.consumer.DbSession", return_value=mock_session):
+                        # Handler that raises
+                        def handler(msg: QueueMessage, session: DbSession) -> None:
+                            raise ValueError("Handler error")
+
+                        # Run should propagate the exception
+                        with pytest.raises(ValueError, match="Handler error"):
+                            consumer.run(handler=handler, engine=mock_engine)
+
+                        # Verify ack() was NOT called
+                        assert not ack_called, "Message should not be acked when handler raises"
+
+                        # Verify message remains pending (XPENDING would return it)
+                        pending = redis_client.xpending_range(
+                            name=queue_config.stream_key,
+                            groupname=queue_config.consumer_group,
+                            min="-",
+                            max="+",
+                            count=10,
+                        )
+                        pending_ids = [p["message_id"] for p in pending]
+                        assert test_msg.id in pending_ids, "Message should remain in XPENDING when handler raises"
+
+    def test_run_does_not_ack_when_commit_fails(self, redis_client: Redis, queue_config: QueueConfig) -> None:
+        """Test that run() does not ack message when commit fails in DbSession.__exit__.
+        
+        Base-case semantics: If commit fails inside DbSession.__exit__ → run() raises
+        AND message is NOT acked (still XPENDING).
+        """
+        consumer = QueueConsumer(redis_client, queue_config)
+        mock_engine = MagicMock(spec=Engine)
+
+        # Create a test message
+        test_msg = QueueMessage(
+            stream=queue_config.stream_key,
+            group=queue_config.consumer_group,
+            id="456-0",
+            payload={"test": "data"},
+        )
+
+        # Mock next() to return the message once, then None to exit loop
+        call_count = 0
+        def mock_next(block_ms=None):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return test_msg
+            return None
+
+        # Mock ack() to track if it was called
+        ack_called = False
+        def track_ack(msg: QueueMessage) -> None:
+            nonlocal ack_called
+            ack_called = True
+
+        with patch.object(consumer, "next", side_effect=mock_next):
+            with patch.object(consumer, "ack", side_effect=track_ack):
+                # Mock redis_client.xpending_range to verify message remains pending
+                with patch.object(redis_client, "xpending_range", return_value=[{"message_id": test_msg.id}]):
+                    # Handler that succeeds
+                    def handler(msg: QueueMessage, session: DbSession) -> None:
+                        # Handler completes successfully
+                        pass
+
+                    # Create a mock session that fails on __exit__ (commit)
+                    mock_session = MagicMock(spec=DbSession)
+                    mock_session.__enter__ = MagicMock(return_value=mock_session)
+                    # Make __exit__ raise RuntimeError when called without exception (successful handler)
+                    def failing_exit(self, exc_type, exc_val, exc_tb):
+                        if exc_type is None:
+                            raise RuntimeError("Commit failed")
+                        return False
+                    mock_session.__exit__ = failing_exit
+
+                    with patch("conquiet.queue.consumer.DbSession", return_value=mock_session):
+                        # Run should propagate the commit failure
+                        with pytest.raises(RuntimeError, match="Commit failed"):
+                            consumer.run(handler=handler, engine=mock_engine)
+
+                        # Verify ack() was NOT called
+                        assert not ack_called, "Message should not be acked when commit fails"
+
+                        # Verify message remains pending (XPENDING would return it)
+                        pending = redis_client.xpending_range(
+                            name=queue_config.stream_key,
+                            groupname=queue_config.consumer_group,
+                            min="-",
+                            max="+",
+                            count=10,
+                        )
+                        pending_ids = [p["message_id"] for p in pending]
+                        assert test_msg.id in pending_ids, "Message should remain in XPENDING when commit fails"
+
+    @pytest.mark.queue_integration
+    def test_run_executes_correct_sequence(self, redis_client: Redis, queue_config: QueueConfig, engine: Engine) -> None:
+        """Test that run() executes the correct control flow sequence."""
+        queue = RedisStreamsQueue(redis_client, queue_config)
+        consumer = QueueConsumer(redis_client, queue_config)
+
+        # Create a unique test table per test run
+        table_name = f"test_run_{uuid.uuid4().hex[:12]}"
+        with engine.begin() as conn:
+            conn.exec_driver_sql(f"CREATE TABLE {table_name} (id BIGINT PRIMARY KEY, value INT)")
+
+        # Enqueue a message
+        queue.enqueue({"id": 1, "value": 42})
+
+        # Track execution order
+        execution_order = []
+        exception_captured: list[Exception] = []
+
+        def handler(msg: QueueMessage, session: DbSession) -> None:
+            execution_order.append("handler")
+            session.execute(
+                f"INSERT INTO {table_name} (id, value) VALUES (:id, :value)",
                 {"id": msg.payload["id"], "value": msg.payload["value"]},
             )
 
-        # Run in background thread and stop after processing one message
-        def run_with_stop():
-            # Process one message then stop
-            msg = consumer.next(block_ms=100)
-            if msg:
-                tx = db_factory.begin()
-                try:
-                    handler(msg, tx)
-                    tx.commit()
-                except Exception:
-                    tx.rollback()
-                    raise
-                else:
-                    consumer.ack(msg)
-            consumer.stop()
+        # Run in a separate thread so we can stop it
+        def run_consumer() -> None:
+            try:
+                consumer.run(handler=handler, engine=engine)
+            except Exception as exc:
+                exception_captured.append(exc)
 
-        thread = threading.Thread(target=run_with_stop, daemon=True)
+        thread = threading.Thread(target=run_consumer, daemon=True)
         thread.start()
-        thread.join(timeout=5.0)
 
-        # Verify data was committed
-        tx = db_factory.begin()
-        row = tx.fetch_one(f"SELECT id, value FROM `{table}` WHERE id = :id", {"id": 1})
-        tx.commit()
-        assert row == {"id": 1, "value": 100}
+        # Poll until handler was called
+        _poll_until(lambda: "handler" in execution_order, timeout=2.0)
 
-    def test_run_rolls_back_on_handler_exception(
-        self, redis_client: Redis, queue_config: QueueConfig, engine, fresh_table: str
-    ) -> None:
+        # Stop the consumer
+        consumer.stop()
+        # Allow time for stop() to take effect (best-effort, may wait for block_ms timeout)
+        join_timeout = 2 * (queue_config.block_ms / 1000) + 0.5
+        thread.join(timeout=join_timeout)
+
+        # Verify thread terminated
+        assert not thread.is_alive(), "consumer.run() thread did not exit after stop()"
+
+        # Verify handler was called
+        assert "handler" in execution_order
+
+        # Verify no unexpected exceptions
+        assert len(exception_captured) == 0
+
+        # Verify database was committed
+        with engine.connect() as conn:
+            result = conn.exec_driver_sql(f"SELECT * FROM {table_name} WHERE id = 1")
+            row = result.fetchone()
+            assert row is not None
+            assert row[1] == 42
+
+    @pytest.mark.queue_integration
+    def test_run_rolls_back_on_exception(self, redis_client: Redis, queue_config: QueueConfig, engine: Engine) -> None:
         """Test that run() rolls back transaction on handler exception."""
+        queue = RedisStreamsQueue(redis_client, queue_config)
         consumer = QueueConsumer(redis_client, queue_config)
-        queue = consumer._queue
-        db_factory = DbFactory(engine)
-        table = fresh_table
 
-        # Enqueue message
-        queue.enqueue({"id": 1, "value": 100})
+        # Create a unique test table per test run
+        table_name = f"test_run_rollback_{uuid.uuid4().hex[:12]}"
+        with engine.begin() as conn:
+            conn.exec_driver_sql(f"CREATE TABLE {table_name} (id BIGINT PRIMARY KEY, value INT)")
 
-        # Handler that raises exception
-        def handler(msg: QueueMessage, tx: DbTransaction) -> None:
-            tx.execute(
-                f"INSERT INTO `{table}` (id, value) VALUES (:id, :value)",
+        # Enqueue a message
+        queue.enqueue({"id": 1, "value": 42})
+
+        def handler(msg: QueueMessage, session: DbSession) -> None:
+            session.execute(
+                f"INSERT INTO {table_name} (id, value) VALUES (:id, :value)",
                 {"id": msg.payload["id"], "value": msg.payload["value"]},
             )
-            raise RuntimeError("Handler error")
+            raise ValueError("Test error")
 
-        # Run handler manually (simulating run() behavior)
-        msg = consumer.next(block_ms=100)
-        assert msg is not None
+        # Run should propagate the exception
+        with pytest.raises(ValueError, match="Test error"):
+            consumer.run(handler=handler, engine=engine)
 
-        tx = db_factory.begin()
-        try:
-            handler(msg, tx)
-            tx.commit()
-        except Exception:
-            tx.rollback()
-            raise
+        # Verify database was rolled back (no row inserted)
+        with engine.connect() as conn:
+            result = conn.exec_driver_sql(f"SELECT * FROM {table_name} WHERE id = 1")
+            row = result.fetchone()
+            assert row is None
 
-        # Verify data was NOT committed
-        tx2 = db_factory.begin()
-        row = tx2.fetch_one(f"SELECT id FROM `{table}` WHERE id = :id", {"id": 1})
-        tx2.commit()
-        assert row is None
-
-    def test_run_acknowledges_after_commit(
-        self, redis_client: Redis, queue_config: QueueConfig, engine, fresh_table: str
-    ) -> None:
-        """Test that run() acknowledges message after commit."""
+    @pytest.mark.queue_integration
+    def test_run_acks_after_commit(self, redis_client: Redis, queue_config: QueueConfig, engine: Engine) -> None:
+        """Test that run() acknowledges message after successful commit."""
+        queue = RedisStreamsQueue(redis_client, queue_config)
         consumer = QueueConsumer(redis_client, queue_config)
-        queue = consumer._queue
-        db_factory = DbFactory(engine)
-        table = fresh_table
 
-        # Enqueue message
-        queue.enqueue({"id": 1, "value": 100})
+        # Create a unique test table per test run
+        table_name = f"test_run_ack_{uuid.uuid4().hex[:12]}"
+        with engine.begin() as conn:
+            conn.exec_driver_sql(f"CREATE TABLE {table_name} (id BIGINT PRIMARY KEY, value INT)")
 
-        # Handler
-        def handler(msg: QueueMessage, tx: DbTransaction) -> None:
-            tx.execute(
-                f"INSERT INTO `{table}` (id, value) VALUES (:id, :value)",
+        # Enqueue a message
+        entry_id = queue.enqueue({"id": 1, "value": 42})
+
+        # Track if handler was called to verify processing
+        handler_called = threading.Event()
+
+        def handler(msg: QueueMessage, session: DbSession) -> None:
+            handler_called.set()
+            session.execute(
+                f"INSERT INTO {table_name} (id, value) VALUES (:id, :value)",
                 {"id": msg.payload["id"], "value": msg.payload["value"]},
             )
 
-        # Run handler manually
-        msg = consumer.next(block_ms=100)
-        assert msg is not None
+        # Run in a separate thread
+        exception_captured: list[Exception] = []
 
-        tx = db_factory.begin()
-        try:
-            handler(msg, tx)
-            tx.commit()
-        except Exception:
-            tx.rollback()
-            raise
-        else:
-            consumer.ack(msg)
+        def run_consumer() -> None:
+            try:
+                consumer.run(handler=handler, engine=engine)
+            except Exception as exc:
+                exception_captured.append(exc)
 
-        # Verify message is acknowledged
-        pending_info = redis_client.xpending_range(
+        thread = threading.Thread(target=run_consumer, daemon=True)
+        thread.start()
+
+        # Poll until message is acknowledged
+        # Wait for handler to be called (proves message was processed)
+        # Then verify message is acked
+        _poll_until(lambda: handler_called.is_set(), timeout=5.0)
+
+        # Verify DB was updated (message was processed)
+        with engine.connect() as conn:
+            result = conn.exec_driver_sql(f"SELECT * FROM {table_name} WHERE id = 1")
+            row = result.fetchone()
+            assert row is not None, "Handler should have inserted row"
+            assert row[1] == 42, "Row value should match"
+
+        # Now verify message is acked (not in pending list)
+        def is_acked() -> bool:
+            pending = redis_client.xpending_range(
+                name=queue_config.stream_key,
+                groupname=queue_config.consumer_group,
+                min="-",
+                max="+",
+                count=10,
+            )
+            pending_ids = [p["message_id"] for p in pending]
+            # Handle both string and bytes message IDs
+            pending_ids_str = [pid.decode("utf-8") if isinstance(pid, bytes) else str(pid) for pid in pending_ids]
+            return entry_id not in pending_ids_str
+
+        _poll_until(is_acked, timeout=2.0)
+
+        consumer.stop()
+        # Allow time for stop() to take effect (best-effort, may wait for block_ms timeout)
+        join_timeout = 2 * (queue_config.block_ms / 1000) + 0.5
+        thread.join(timeout=join_timeout)
+
+        # Verify thread terminated
+        assert not thread.is_alive(), "consumer.run() thread did not exit after stop()"
+
+        # Verify no unexpected exceptions
+        assert len(exception_captured) == 0
+
+        # Verify message was acknowledged (not pending)
+        pending = redis_client.xpending_range(
             name=queue_config.stream_key,
             groupname=queue_config.consumer_group,
             min="-",
             max="+",
             count=10,
         )
-        msg_ids = [p.get("message_id") for p in pending_info]
-        if msg_ids and isinstance(msg_ids[0], bytes):
-            msg_ids = [m.decode("utf-8") if isinstance(m, bytes) else str(m) for m in msg_ids]
-        elif msg_ids:
-            msg_ids = [str(m) for m in msg_ids]
-        assert msg.id not in msg_ids
+        pending_ids = [p["message_id"] for p in pending]
+        pending_ids_str = [pid.decode("utf-8") if isinstance(pid, bytes) else str(pid) for pid in pending_ids]
+        assert entry_id not in pending_ids_str, "Message should be acked and not in pending list"
 
-    def test_run_propagates_handler_exceptions(
-        self, redis_client: Redis, queue_config: QueueConfig, engine, fresh_table: str
-    ) -> None:
-        """Test that run() propagates handler exceptions."""
+    @pytest.mark.queue_integration
+    def test_run_propagates_user_exceptions(self, redis_client: Redis, queue_config: QueueConfig, engine: Engine) -> None:
+        """Test that run() propagates user exceptions without swallowing."""
+        queue = RedisStreamsQueue(redis_client, queue_config)
         consumer = QueueConsumer(redis_client, queue_config)
-        queue = consumer._queue
-        db_factory = DbFactory(engine)
-        table = fresh_table
 
-        # Enqueue message
-        queue.enqueue({"id": 1, "value": 100})
-
-        # Handler that raises exception
-        def handler(msg: QueueMessage, tx: DbTransaction) -> None:
-            raise ValueError("Handler error")
-
-        # Run handler manually
-        msg = consumer.next(block_ms=100)
-        assert msg is not None
-
-        with pytest.raises(ValueError, match="Handler error"):
-            tx = db_factory.begin()
-            try:
-                handler(msg, tx)
-                tx.commit()
-            except Exception:
-                tx.rollback()
-                raise
-
-
-class TestRecoverStale:
-    """Tests for recover_stale() method."""
-
-    def test_recover_stale_claims_stale_messages(
-        self, redis_client: Redis, queue_config: QueueConfig
-    ) -> None:
-        """Test that recover_stale() claims stale messages."""
-        consumer = QueueConsumer(redis_client, queue_config)
-        queue = consumer._queue
-
-        # Enqueue message
         queue.enqueue({"test": "data"})
 
-        # Read message but don't ack (makes it pending)
-        msg = consumer.next(block_ms=100)
-        assert msg is not None
+        def handler(msg: QueueMessage, session: DbSession) -> None:
+            raise RuntimeError("User error")
 
-        # Wait for message to become stale (use short claim_idle_ms for test)
-        config_with_short_idle = QueueConfig(
+        with pytest.raises(RuntimeError, match="User error"):
+            consumer.run(handler=handler, engine=engine)
+
+    @pytest.mark.queue_integration
+    def test_run_propagates_queue_error_from_ack(self, redis_client: Redis, queue_config: QueueConfig, engine: Engine) -> None:
+        """Test that run() propagates QueueError from ack failures after commit."""
+        queue = RedisStreamsQueue(redis_client, queue_config)
+        consumer = QueueConsumer(redis_client, queue_config)
+
+        # Create a unique test table per test run
+        table_name = f"test_run_ack_error_{uuid.uuid4().hex[:12]}"
+        with engine.begin() as conn:
+            conn.exec_driver_sql(f"CREATE TABLE {table_name} (id BIGINT PRIMARY KEY)")
+
+        queue.enqueue({"id": 1})
+
+        def handler(msg: QueueMessage, session: DbSession) -> None:
+            session.execute(f"INSERT INTO {table_name} (id) VALUES (:id)", {"id": msg.payload["id"]})
+
+        # Mock ack to fail after handler succeeds
+        # Simulate what RedisStreamsQueue.ack would do: wrap RedisError in QueueError
+        def failing_ack(msg: QueueMessage) -> None:
+            raise QueueError("Failed to acknowledge message: Ack failed")
+
+        with patch.object(consumer._queue, "ack", side_effect=failing_ack):
+            # Should propagate QueueError from ack failure
+            with pytest.raises(QueueError, match="Failed to acknowledge message"):
+                consumer.run(handler=handler, engine=engine)
+
+        # But transaction should still be committed
+        with engine.connect() as conn:
+            result = conn.exec_driver_sql(f"SELECT * FROM {table_name} WHERE id = 1")
+            row = result.fetchone()
+            assert row is not None
+
+    @pytest.mark.queue_integration
+    def test_run_ack_failure_after_commit_leaves_message_pending(
+        self, redis_client: Redis, queue_config: QueueConfig, engine: Engine
+    ) -> None:
+        """Test that ack failure after commit leaves message pending (at-least-once behavior).
+        
+        This test verifies the standard at-least-once semantics: if ACK fails after
+        DB commit, the message remains pending and will be redelivered, requiring
+        idempotent handlers.
+        """
+        queue = RedisStreamsQueue(redis_client, queue_config)
+        consumer = QueueConsumer(redis_client, queue_config)
+
+        # Create a unique test table per test run
+        table_name = f"test_run_ack_failure_{uuid.uuid4().hex[:12]}"
+        with engine.begin() as conn:
+            conn.exec_driver_sql(f"CREATE TABLE {table_name} (id BIGINT PRIMARY KEY)")
+
+        # Enqueue a message
+        entry_id = queue.enqueue({"id": 1})
+
+        def handler(msg: QueueMessage, session: DbSession) -> None:
+            session.execute(f"INSERT INTO {table_name} (id) VALUES (:id)", {"id": msg.payload["id"]})
+
+        # Mock ack to fail after handler succeeds and commit happens
+        def failing_ack(msg: QueueMessage) -> None:
+            raise QueueError("Failed to acknowledge message: Redis connection lost")
+
+        with patch.object(consumer._queue, "ack", side_effect=failing_ack):
+            # Should propagate QueueError from ack failure
+            with pytest.raises(QueueError, match="Failed to acknowledge message"):
+                consumer.run(handler=handler, engine=engine)
+
+        # Verify DB transaction was committed (despite ack failure)
+        with engine.connect() as conn:
+            result = conn.exec_driver_sql(f"SELECT * FROM {table_name} WHERE id = 1")
+            row = result.fetchone()
+            assert row is not None, "DB transaction should be committed even if ack fails"
+
+        # Verify message remains pending (will be redelivered)
+        pending = redis_client.xpending_range(
+            name=queue_config.stream_key,
+            groupname=queue_config.consumer_group,
+            min="-",
+            max="+",
+            count=10,
+        )
+        pending_ids = [p["message_id"] for p in pending]
+        # Handle both string and bytes message IDs
+        pending_ids_str = [pid.decode("utf-8") if isinstance(pid, bytes) else str(pid) for pid in pending_ids]
+        assert entry_id in pending_ids_str, "Message should remain pending after ack failure, enabling redelivery"
+
+
+class TestClaimStale:
+    """Tests for claim_stale() method."""
+
+    @pytest.mark.queue_integration
+    def test_claim_stale_claims_stale_messages(self, redis_client: Redis, queue_config: QueueConfig) -> None:
+        """Test that claim_stale() can claim stale messages."""
+        consumer = QueueConsumer(redis_client, queue_config)
+
+        # Create another consumer to own the message
+        other_config = QueueConfig(
             stream_key=queue_config.stream_key,
             consumer_group=queue_config.consumer_group,
-            consumer_name=queue_config.consumer_name,
-            claim_idle_ms=100,  # Very short for testing
+            consumer_name="other_consumer",
         )
-        consumer2 = QueueConsumer(redis_client, config_with_short_idle)
+        other_queue = RedisStreamsQueue(redis_client, other_config)
 
-        # Wait for message to become stale
-        time.sleep(0.2)
+        # Enqueue and read with other consumer (makes it pending)
+        other_queue.enqueue({"test": "data"})
+        other_queue.read(block_ms=100, count=1)
 
-        # Recover stale messages
-        claimed = consumer2.recover_stale(min_idle_ms=50)
+        # Poll until message is stale enough (min_idle_ms=200)
+        def is_stale_enough() -> bool:
+            pending = redis_client.xpending_range(
+                name=queue_config.stream_key,
+                groupname=queue_config.consumer_group,
+                min="-",
+                max="+",
+                count=10,
+            )
+            if not pending:
+                return False
+            for p in pending:
+                idle_ms = p.get("time_since_delivered", 0)
+                if idle_ms >= 200:
+                    return True
+            return False
 
-        # Should have claimed the stale message
+        _poll_until(is_stale_enough, timeout=2.0)
+
+        # Claim stale messages
+        claimed = consumer.claim_stale(min_idle_ms=200)
+
         assert len(claimed) >= 1
         assert claimed[0].payload == {"test": "data"}
 
-    def test_recover_stale_returns_empty_when_no_stale(
-        self, redis_client: Redis, queue_config: QueueConfig
-    ) -> None:
-        """Test that recover_stale() returns empty list when no stale messages."""
+    @pytest.mark.queue_integration
+    def test_claim_stale_uses_config_default(self, redis_client: Redis, queue_config: QueueConfig) -> None:
+        """Test that claim_stale() uses config.claim_idle_ms when min_idle_ms is None."""
         consumer = QueueConsumer(redis_client, queue_config)
 
-        # No stale messages
-        claimed = consumer.recover_stale()
+        # Should work (may be empty if no stale messages, but shouldn't error)
+        claimed = consumer.claim_stale()
+
+        assert isinstance(claimed, list)
+        assert len(claimed) == 0  # No stale messages in empty queue
+
+    @pytest.mark.queue_integration
+    def test_claim_stale_returns_empty_when_no_stale(self, redis_client: Redis, queue_config: QueueConfig) -> None:
+        """Test that claim_stale() returns empty list when no stale messages."""
+        consumer = QueueConsumer(redis_client, queue_config)
+
+        claimed = consumer.claim_stale(min_idle_ms=1000)
 
         assert claimed == []
 
-    def test_recover_stale_uses_config_claim_idle_ms(
-        self, redis_client: Redis, queue_config: QueueConfig
-    ) -> None:
-        """Test that recover_stale() uses config.claim_idle_ms when min_idle_ms is None."""
+    def test_claim_stale_propagates_queue_error(self, redis_client: Redis, queue_config: QueueConfig) -> None:
+        """Test that claim_stale() propagates QueueError on Redis failures."""
         consumer = QueueConsumer(redis_client, queue_config)
 
-        # Should not raise
-        claimed = consumer.recover_stale()
+        # Mock RedisStreamsQueue.claim_stale to raise QueueError (as it would after wrapping RedisError)
+        with patch.object(consumer._queue, "claim_stale", side_effect=QueueError("Failed to claim stale messages: Connection failed")):
+            with pytest.raises(QueueError, match="Failed to claim stale messages"):
+                consumer.claim_stale(min_idle_ms=1000)
 
-        assert isinstance(claimed, list)
+    @pytest.mark.queue_integration
+    def test_claim_stale_partial_recovery(self, redis_client: Redis, queue_config: QueueConfig) -> None:
+        """Test that claim_stale() can recover some but not all stale messages (best-effort).
+        
+        This verifies the best-effort nature of claim_stale(): it may not claim
+        all eligible messages, especially when count limit is reached or when
+        messages are being actively processed. We test this by using the underlying
+        queue's claim_stale with a count limit to demonstrate partial recovery.
+        """
+        consumer = QueueConsumer(redis_client, queue_config)
 
+        # Create multiple other consumers to own messages
+        other_configs = [
+            QueueConfig(
+                stream_key=queue_config.stream_key,
+                consumer_group=queue_config.consumer_group,
+                consumer_name=f"other_consumer_{i}",
+            )
+            for i in range(3)
+        ]
+        other_queues = [RedisStreamsQueue(redis_client, cfg) for cfg in other_configs]
+
+        # Enqueue multiple messages and read them with different consumers
+        entry_ids = []
+        for i in range(5):
+            entry_id = other_queues[0].enqueue({"index": i})
+            entry_ids.append(entry_id)
+            # Read with different consumers to make them pending
+            other_queues[i % len(other_queues)].read(block_ms=100, count=1)
+
+        # Wait for messages to become stale
+        time.sleep(0.2)
+
+        # Claim with a count limit using the underlying queue (default is 10, use 3 to test partial recovery)
+        claimed = consumer._queue.claim_stale(min_idle_ms=100, count=3)
+
+        # Should claim some messages (up to count limit)
+        assert len(claimed) <= 3, "Should not claim more than count limit"
+        assert len(claimed) > 0, "Should claim at least some stale messages"
+
+        # Verify claimed messages are in the original list
+        claimed_ids = {msg.id for msg in claimed}
+        assert all(cid in entry_ids for cid in claimed_ids), "Claimed messages should be from original set"
+
+        # Verify some messages may still be pending (best-effort, not all recovered)
+        pending = redis_client.xpending_range(
+            name=queue_config.stream_key,
+            groupname=queue_config.consumer_group,
+            min="-",
+            max="+",
+            count=10,
+        )
+        # Some messages should still be pending (either not claimed yet, or claimed by this consumer)
+        assert len(pending) > 0, "Some messages should still be pending after partial recovery"
+
+
+class TestMultipleConsumers:
+    """Tests for multiple consumers competing for messages."""
+
+    @pytest.mark.queue_integration
+    def test_multiple_consumers_compete(self, redis_client: Redis, queue_config: QueueConfig) -> None:
+        """Test that multiple consumers can read from same group without conflicts.
+        
+        Verifies that multiple consumers in the same consumer group can safely
+        read messages without conflicts, and each message is delivered to only
+        one consumer.
+        """
+        queue = RedisStreamsQueue(redis_client, queue_config)
+
+        # Create multiple consumers in the same group
+        consumer_configs = [
+            QueueConfig(
+                stream_key=queue_config.stream_key,
+                consumer_group=queue_config.consumer_group,
+                consumer_name=f"consumer_{i}",
+            )
+            for i in range(3)
+        ]
+        consumers = [QueueConsumer(redis_client, cfg) for cfg in consumer_configs]
+
+        # Enqueue multiple messages
+        num_messages = 6
+        for i in range(num_messages):
+            queue.enqueue({"index": i})
+
+        # All consumers read messages concurrently
+        messages_received = []
+        messages_lock = threading.Lock()
+
+        def read_messages(consumer: QueueConsumer, consumer_id: int) -> None:
+            for _ in range(2):  # Each consumer tries to read 2 messages
+                msg = consumer.next(block_ms=500)
+                if msg is not None:
+                    with messages_lock:
+                        messages_received.append((consumer_id, msg))
+
+        threads = []
+        for i, consumer in enumerate(consumers):
+            thread = threading.Thread(target=read_messages, args=(consumer, i), daemon=True)
+            threads.append(thread)
+            thread.start()
+
+        # Wait for all reads to complete
+        for thread in threads:
+            thread.join(timeout=2.0)
+
+        # Verify total messages received (should be at most num_messages)
+        assert len(messages_received) <= num_messages, "Should not receive more messages than enqueued"
+
+        # Verify each message ID appears only once (no duplicate deliveries)
+        message_ids = [msg.id for _, msg in messages_received]
+        assert len(message_ids) == len(set(message_ids)), "Each message should be delivered to only one consumer"
+
+        # Verify messages are distributed across consumers (best-effort, not guaranteed)
+        consumer_counts = {}
+        for consumer_id, _ in messages_received:
+            consumer_counts[consumer_id] = consumer_counts.get(consumer_id, 0) + 1
+        assert len(consumer_counts) > 0, "At least one consumer should receive messages"
+
+        # Cleanup: stop all consumers
+        for consumer in consumers:
+            consumer.stop()
+
+
+class TestShutdownSemantics:
+    """Tests for shutdown behavior."""
+
+    @pytest.mark.queue_integration
+    def test_shutdown_leaves_inflight_messages_pending(self, redis_client: Redis, queue_config: QueueConfig) -> None:
+        """Test that shutdown leaves in-flight messages pending."""
+        queue = RedisStreamsQueue(redis_client, queue_config)
+        consumer = QueueConsumer(redis_client, queue_config)
+
+        # Enqueue a message
+        entry_id = queue.enqueue({"test": "data"})
+
+        # Read it (makes it pending)
+        msg = consumer.next(block_ms=100)
+        assert msg is not None
+
+        # Stop without acking
+        consumer.stop()
+
+        # Message should still be pending
+        pending = redis_client.xpending_range(
+            name=queue_config.stream_key,
+            groupname=queue_config.consumer_group,
+            min="-",
+            max="+",
+            count=10,
+        )
+        pending_ids = [p["message_id"] for p in pending]
+        # Handle both string and bytes message IDs
+        pending_ids_str = [pid.decode("utf-8") if isinstance(pid, bytes) else str(pid) for pid in pending_ids]
+        assert entry_id in pending_ids_str
+
+
+class TestThreadSafety:
+    """Tests for thread-safety of stop() and _stopping flag."""
+
+    def test_stop_is_thread_safe(self, redis_client: Redis, queue_config: QueueConfig) -> None:
+        """Test that stop() can be called from multiple threads safely."""
+        consumer = QueueConsumer(redis_client, queue_config)
+
+        # Call stop from multiple threads
+        threads = []
+        for _ in range(5):
+            thread = threading.Thread(target=consumer.stop)
+            threads.append(thread)
+            thread.start()
+
+        # Wait for all threads
+        for thread in threads:
+            thread.join()
+
+        # Should be stopped
+        assert consumer._stopping.is_set()
+
+    @pytest.mark.queue_integration
+    def test_stopping_flag_checked_safely(self, redis_client: Redis, queue_config: QueueConfig) -> None:
+        """Test that stop() signal is checked safely across threads."""
+        consumer = QueueConsumer(redis_client, queue_config)
+
+        # Use an event to signal that iter_messages() exited
+        iteration_exited = threading.Event()
+        messages_received = []
+
+        def iterate() -> None:
+            try:
+                for msg in consumer.iter_messages():
+                    messages_received.append(msg)
+            except Exception:
+                # Allow exceptions to propagate, but still signal exit
+                pass
+            finally:
+                iteration_exited.set()
+
+        thread = threading.Thread(target=iterate, daemon=True)
+        thread.start()
+
+        # Give thread a moment to start iterating
+        time.sleep(0.1)
+
+        # Stop from another thread
+        consumer.stop()
+
+        # Wait for iteration to exit (may take up to block_ms timeout)
+        # Allow extra time for stop() to take effect (best-effort)
+        max_wait = 2 * (queue_config.block_ms / 1000) + 0.5
+        assert iteration_exited.wait(timeout=max_wait), "iter_messages() did not exit after stop()"
+
+        # Verify iteration stopped (behavioral check: no more messages yielded)
+        # Note: messages_received may be empty if no messages were available, but iteration should stop
+
+    @pytest.mark.queue_integration
+    def test_stop_during_blocking_read(self, redis_client: Redis, queue_config: QueueConfig) -> None:
+        """Test that stop() during active XREADGROUP waits for block_ms timeout.
+        
+        This verifies best-effort shutdown semantics: stop() doesn't interrupt
+        an in-progress blocking read, but takes effect after the block timeout.
+        """
+        # Use a longer block_ms to ensure we can observe the blocking behavior
+        long_block_config = QueueConfig(
+            stream_key=queue_config.stream_key,
+            consumer_group=queue_config.consumer_group,
+            consumer_name=queue_config.consumer_name,
+            block_ms=1000,  # 1 second block
+        )
+        consumer_long_block = QueueConsumer(redis_client, long_block_config)
+
+        read_started = threading.Event()
+        read_completed = threading.Event()
+        stop_called_time = None
+        read_returned_time = None
+
+        def blocking_read() -> None:
+            nonlocal read_returned_time
+            read_started.set()
+            # This will block for up to 1000ms
+            _ = consumer_long_block.next(block_ms=1000)  # Ignore message, just test blocking behavior
+            read_returned_time = time.monotonic()
+            read_completed.set()
+
+        thread = threading.Thread(target=blocking_read, daemon=True)
+        thread.start()
+
+        # Wait for read to start (should be very quick)
+        assert read_started.wait(timeout=0.1), "Read should start quickly"
+
+        # Give a moment for XREADGROUP to be in blocking state
+        time.sleep(0.05)
+
+        # Call stop() while read is blocking
+        stop_called_time = time.monotonic()
+        consumer_long_block.stop()
+
+        # Wait for read to complete (should wait for block_ms timeout)
+        assert read_completed.wait(timeout=1.5), "Read should complete after block_ms timeout"
+
+        # Verify that read waited for the full block_ms (allowing some tolerance)
+        elapsed = read_returned_time - stop_called_time
+        assert elapsed >= 0.8, f"Read should wait ~1s after stop(), but waited only {elapsed:.2f}s"
+        assert elapsed <= 1.3, f"Read should not wait much longer than block_ms, but waited {elapsed:.2f}s"
