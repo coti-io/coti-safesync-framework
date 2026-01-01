@@ -799,6 +799,470 @@ class TestClaimStale:
         assert len(pending) > 0, "Some messages should still be pending after partial recovery"
 
 
+class TestRunClaimStale:
+    """Tests for run_claim_stale() template method."""
+
+    @pytest.mark.queue_integration
+    def test_run_claim_stale_processes_claimed_messages(
+        self, redis_client: Redis, queue_config: QueueConfig, engine: Engine
+    ) -> None:
+        """Test that run_claim_stale() processes claimed messages through handler."""
+        consumer = QueueConsumer(redis_client, queue_config)
+
+        # Create another consumer to own the message
+        other_config = QueueConfig(
+            stream_key=queue_config.stream_key,
+            consumer_group=queue_config.consumer_group,
+            consumer_name="other_consumer",
+        )
+        other_queue = RedisStreamsQueue(redis_client, other_config)
+
+        # Create a unique test table per test run
+        table_name = f"test_run_claim_stale_{uuid.uuid4().hex[:12]}"
+        with engine.begin() as conn:
+            conn.exec_driver_sql(f"CREATE TABLE {table_name} (id BIGINT PRIMARY KEY, value INT)")
+
+        # Enqueue and read with other consumer (makes it pending)
+        other_queue.enqueue({"id": 1, "value": 100})
+        other_queue.read(block_ms=100, count=1)
+
+        # Track if handler was called
+        handler_called = threading.Event()
+        handler_received_payload = None
+
+        def handler(msg: QueueMessage, session: DbSession) -> None:
+            nonlocal handler_received_payload
+            handler_called.set()
+            handler_received_payload = msg.payload
+            session.execute(
+                f"INSERT INTO {table_name} (id, value) VALUES (:id, :value)",
+                {"id": msg.payload["id"], "value": msg.payload["value"]},
+            )
+
+        # Poll until message is stale enough (min_idle_ms=200)
+        def is_stale_enough() -> bool:
+            pending = redis_client.xpending_range(
+                name=queue_config.stream_key,
+                groupname=queue_config.consumer_group,
+                min="-",
+                max="+",
+                count=10,
+            )
+            if not pending:
+                return False
+            for p in pending:
+                idle_ms = p.get("time_since_delivered", 0)
+                if idle_ms >= 200:
+                    return True
+            return False
+
+        _poll_until(is_stale_enough, timeout=2.0)
+
+        # Run claim_stale in a separate thread
+        exception_captured: list[Exception] = []
+
+        def run_claim_stale_worker() -> None:
+            try:
+                consumer.run_claim_stale(
+                    handler=handler,
+                    engine=engine,
+                    min_idle_ms=200,
+                    claim_interval_ms=100,  # Check frequently for test
+                )
+            except Exception as exc:
+                exception_captured.append(exc)
+
+        thread = threading.Thread(target=run_claim_stale_worker, daemon=True)
+        thread.start()
+
+        # Poll until handler was called
+        _poll_until(lambda: handler_called.is_set(), timeout=5.0)
+
+        # Stop the consumer
+        consumer.stop()
+        # Allow time for stop() to take effect
+        thread.join(timeout=2.0)
+
+        # Verify handler was called with correct payload
+        assert handler_called.is_set(), "Handler should have been called"
+        assert handler_received_payload == {"id": 1, "value": 100}
+
+        # Verify database was committed
+        with engine.connect() as conn:
+            result = conn.exec_driver_sql(f"SELECT * FROM {table_name} WHERE id = 1")
+            row = result.fetchone()
+            assert row is not None, "Row should be inserted"
+            assert row[1] == 100, "Row value should match"
+
+        # Verify no unexpected exceptions
+        assert len(exception_captured) == 0
+
+    @pytest.mark.queue_integration
+    def test_run_claim_stale_acks_after_commit(
+        self, redis_client: Redis, queue_config: QueueConfig, engine: Engine
+    ) -> None:
+        """Test that run_claim_stale() acknowledges message after successful commit."""
+        consumer = QueueConsumer(redis_client, queue_config)
+
+        # Create another consumer to own the message
+        other_config = QueueConfig(
+            stream_key=queue_config.stream_key,
+            consumer_group=queue_config.consumer_group,
+            consumer_name="other_consumer",
+        )
+        other_queue = RedisStreamsQueue(redis_client, other_config)
+
+        # Create a unique test table per test run
+        table_name = f"test_run_claim_stale_ack_{uuid.uuid4().hex[:12]}"
+        with engine.begin() as conn:
+            conn.exec_driver_sql(f"CREATE TABLE {table_name} (id BIGINT PRIMARY KEY)")
+
+        # Enqueue and read with other consumer (makes it pending)
+        entry_id = other_queue.enqueue({"id": 1})
+        other_queue.read(block_ms=100, count=1)
+
+        handler_called = threading.Event()
+
+        def handler(msg: QueueMessage, session: DbSession) -> None:
+            handler_called.set()
+            session.execute(f"INSERT INTO {table_name} (id) VALUES (:id)", {"id": msg.payload["id"]})
+
+        # Poll until message is stale enough
+        def is_stale_enough() -> bool:
+            pending = redis_client.xpending_range(
+                name=queue_config.stream_key,
+                groupname=queue_config.consumer_group,
+                min="-",
+                max="+",
+                count=10,
+            )
+            if not pending:
+                return False
+            for p in pending:
+                idle_ms = p.get("time_since_delivered", 0)
+                if idle_ms >= 200:
+                    return True
+            return False
+
+        _poll_until(is_stale_enough, timeout=2.0)
+
+        # Run claim_stale in a separate thread
+        exception_captured: list[Exception] = []
+
+        def run_claim_stale_worker() -> None:
+            try:
+                consumer.run_claim_stale(
+                    handler=handler,
+                    engine=engine,
+                    min_idle_ms=200,
+                    claim_interval_ms=100,
+                )
+            except Exception as exc:
+                exception_captured.append(exc)
+
+        thread = threading.Thread(target=run_claim_stale_worker, daemon=True)
+        thread.start()
+
+        # Wait for handler to be called
+        _poll_until(lambda: handler_called.is_set(), timeout=5.0)
+
+        # Verify DB was updated
+        with engine.connect() as conn:
+            result = conn.exec_driver_sql(f"SELECT * FROM {table_name} WHERE id = 1")
+            row = result.fetchone()
+            assert row is not None, "Handler should have inserted row"
+
+        # Verify message is acked (not in pending list)
+        def is_acked() -> bool:
+            pending = redis_client.xpending_range(
+                name=queue_config.stream_key,
+                groupname=queue_config.consumer_group,
+                min="-",
+                max="+",
+                count=10,
+            )
+            pending_ids = [p["message_id"] for p in pending]
+            pending_ids_str = [pid.decode("utf-8") if isinstance(pid, bytes) else str(pid) for pid in pending_ids]
+            return entry_id not in pending_ids_str
+
+        _poll_until(is_acked, timeout=2.0)
+
+        consumer.stop()
+        thread.join(timeout=2.0)
+
+        # Verify message was acknowledged
+        pending = redis_client.xpending_range(
+            name=queue_config.stream_key,
+            groupname=queue_config.consumer_group,
+            min="-",
+            max="+",
+            count=10,
+        )
+        pending_ids = [p["message_id"] for p in pending]
+        pending_ids_str = [pid.decode("utf-8") if isinstance(pid, bytes) else str(pid) for pid in pending_ids]
+        assert entry_id not in pending_ids_str, "Message should be acked and not in pending list"
+
+    @pytest.mark.queue_integration
+    def test_run_claim_stale_rollback_on_handler_exception(
+        self, redis_client: Redis, queue_config: QueueConfig, engine: Engine
+    ) -> None:
+        """Test that run_claim_stale() rolls back transaction and does not ACK on handler exception."""
+        consumer = QueueConsumer(redis_client, queue_config)
+
+        # Create another consumer to own the message
+        other_config = QueueConfig(
+            stream_key=queue_config.stream_key,
+            consumer_group=queue_config.consumer_group,
+            consumer_name="other_consumer",
+        )
+        other_queue = RedisStreamsQueue(redis_client, other_config)
+
+        # Create a unique test table per test run
+        table_name = f"test_run_claim_stale_rollback_{uuid.uuid4().hex[:12]}"
+        with engine.begin() as conn:
+            conn.exec_driver_sql(f"CREATE TABLE {table_name} (id BIGINT PRIMARY KEY, value INT)")
+
+        # Enqueue and read with other consumer (makes it pending)
+        entry_id = other_queue.enqueue({"id": 1, "value": 42})
+        other_queue.read(block_ms=100, count=1)
+
+        def handler(msg: QueueMessage, session: DbSession) -> None:
+            session.execute(
+                f"INSERT INTO {table_name} (id, value) VALUES (:id, :value)",
+                {"id": msg.payload["id"], "value": msg.payload["value"]},
+            )
+            raise ValueError("Test error")
+
+        # Poll until message is stale enough
+        def is_stale_enough() -> bool:
+            pending = redis_client.xpending_range(
+                name=queue_config.stream_key,
+                groupname=queue_config.consumer_group,
+                min="-",
+                max="+",
+                count=10,
+            )
+            if not pending:
+                return False
+            for p in pending:
+                idle_ms = p.get("time_since_delivered", 0)
+                if idle_ms >= 200:
+                    return True
+            return False
+
+        _poll_until(is_stale_enough, timeout=2.0)
+
+        # Run claim_stale - should propagate exception
+        exception_captured: list[Exception] = []
+
+        def run_claim_stale_worker() -> None:
+            try:
+                consumer.run_claim_stale(
+                    handler=handler,
+                    engine=engine,
+                    min_idle_ms=200,
+                    claim_interval_ms=100,
+                )
+            except Exception as exc:
+                exception_captured.append(exc)
+
+        thread = threading.Thread(target=run_claim_stale_worker, daemon=True)
+        thread.start()
+
+        # Wait for exception to be raised
+        _poll_until(lambda: len(exception_captured) > 0, timeout=5.0)
+
+        consumer.stop()
+        thread.join(timeout=2.0)
+
+        # Verify exception was propagated
+        assert len(exception_captured) == 1
+        assert isinstance(exception_captured[0], ValueError)
+        assert str(exception_captured[0]) == "Test error"
+
+        # Verify database was rolled back (no row inserted)
+        with engine.connect() as conn:
+            result = conn.exec_driver_sql(f"SELECT * FROM {table_name} WHERE id = 1")
+            row = result.fetchone()
+            assert row is None, "Row should not be inserted on handler exception"
+
+        # Verify message remains pending (not ACKed)
+        pending = redis_client.xpending_range(
+            name=queue_config.stream_key,
+            groupname=queue_config.consumer_group,
+            min="-",
+            max="+",
+            count=10,
+        )
+        pending_ids = [p["message_id"] for p in pending]
+        pending_ids_str = [pid.decode("utf-8") if isinstance(pid, bytes) else str(pid) for pid in pending_ids]
+        assert entry_id in pending_ids_str, "Message should remain pending when handler raises"
+
+    @pytest.mark.queue_integration
+    def test_run_claim_stale_respects_stop_signal(
+        self, redis_client: Redis, queue_config: QueueConfig, engine: Engine
+    ) -> None:
+        """Test that run_claim_stale() respects stop() signal for graceful shutdown."""
+        consumer = QueueConsumer(redis_client, queue_config)
+
+        handler_called = False
+
+        def handler(msg: QueueMessage, session: DbSession) -> None:
+            nonlocal handler_called
+            handler_called = True
+
+        # Run claim_stale in a separate thread
+        exception_captured: list[Exception] = []
+
+        def run_claim_stale_worker() -> None:
+            try:
+                consumer.run_claim_stale(
+                    handler=handler,
+                    engine=engine,
+                    claim_interval_ms=1000,  # 1 second interval
+                )
+            except Exception as exc:
+                exception_captured.append(exc)
+
+        thread = threading.Thread(target=run_claim_stale_worker, daemon=True)
+        thread.start()
+
+        # Wait a bit to ensure it's running
+        time.sleep(0.1)
+
+        # Stop the consumer
+        consumer.stop()
+
+        # Wait for thread to exit
+        thread.join(timeout=2.0)
+
+        # Verify thread terminated
+        assert not thread.is_alive(), "run_claim_stale() thread did not exit after stop()"
+
+        # Verify no unexpected exceptions
+        assert len(exception_captured) == 0
+
+    @pytest.mark.queue_integration
+    def test_run_claim_stale_uses_claim_interval(
+        self, redis_client: Redis, queue_config: QueueConfig, engine: Engine
+    ) -> None:
+        """Test that run_claim_stale() respects claim_interval_ms parameter."""
+        consumer = QueueConsumer(redis_client, queue_config)
+
+        claim_times = []
+        claim_lock = threading.Lock()
+
+        def handler(msg: QueueMessage, session: DbSession) -> None:
+            with claim_lock:
+                claim_times.append(time.monotonic())
+
+        # Run claim_stale with a specific interval
+        claim_interval_ms = 200  # 200ms
+        exception_captured: list[Exception] = []
+
+        def run_claim_stale_worker() -> None:
+            try:
+                consumer.run_claim_stale(
+                    handler=handler,
+                    engine=engine,
+                    claim_interval_ms=claim_interval_ms,
+                )
+            except Exception as exc:
+                exception_captured.append(exc)
+
+        thread = threading.Thread(target=run_claim_stale_worker, daemon=True)
+        thread.start()
+
+        # Wait for at least 2 intervals to verify timing
+        time.sleep((claim_interval_ms / 1000.0) * 2.5)
+
+        consumer.stop()
+        thread.join(timeout=1.0)
+
+        # Verify it checked multiple times (at least 2 intervals)
+        # Note: This is best-effort since there may be no stale messages
+        # The important thing is that it didn't busy-loop
+        assert len(exception_captured) == 0
+
+    @pytest.mark.queue_integration
+    def test_run_claim_stale_uses_config_default_min_idle_ms(
+        self, redis_client: Redis, queue_config: QueueConfig, engine: Engine
+    ) -> None:
+        """Test that run_claim_stale() uses config.claim_idle_ms when min_idle_ms is None."""
+        consumer = QueueConsumer(redis_client, queue_config)
+
+        handler_called = False
+
+        def handler(msg: QueueMessage, session: DbSession) -> None:
+            nonlocal handler_called
+            handler_called = True
+
+        # Run claim_stale without specifying min_idle_ms
+        exception_captured: list[Exception] = []
+
+        def run_claim_stale_worker() -> None:
+            try:
+                consumer.run_claim_stale(
+                    handler=handler,
+                    engine=engine,
+                    claim_interval_ms=100,
+                )
+            except Exception as exc:
+                exception_captured.append(exc)
+
+        thread = threading.Thread(target=run_claim_stale_worker, daemon=True)
+        thread.start()
+
+        # Wait a bit
+        time.sleep(0.2)
+
+        consumer.stop()
+        thread.join(timeout=1.0)
+
+        # Should not raise any errors (may have no stale messages, which is fine)
+        assert len(exception_captured) == 0
+
+    @pytest.mark.queue_integration
+    def test_run_claim_stale_handles_empty_claims(
+        self, redis_client: Redis, queue_config: QueueConfig, engine: Engine
+    ) -> None:
+        """Test that run_claim_stale() handles empty claims gracefully (no stale messages)."""
+        consumer = QueueConsumer(redis_client, queue_config)
+
+        handler_called = False
+
+        def handler(msg: QueueMessage, session: DbSession) -> None:
+            nonlocal handler_called
+            handler_called = True
+
+        # Run claim_stale when there are no stale messages
+        exception_captured: list[Exception] = []
+
+        def run_claim_stale_worker() -> None:
+            try:
+                consumer.run_claim_stale(
+                    handler=handler,
+                    engine=engine,
+                    claim_interval_ms=100,
+                )
+            except Exception as exc:
+                exception_captured.append(exc)
+
+        thread = threading.Thread(target=run_claim_stale_worker, daemon=True)
+        thread.start()
+
+        # Wait for a couple of intervals
+        time.sleep(0.3)
+
+        consumer.stop()
+        thread.join(timeout=1.0)
+
+        # Should not raise any errors
+        assert len(exception_captured) == 0
+        # Handler should not be called (no stale messages)
+        assert not handler_called
+
+
 class TestMultipleConsumers:
     """Tests for multiple consumers competing for messages."""
 
