@@ -33,11 +33,11 @@ def env_int(name: str, default: int) -> int:
 
 
 def default_processes() -> int:
-    return env_int("CONQUIET_CONCURRENCY_PROCESSES", 5)
+    return env_int("CONQUIET_CONCURRENCY_PROCESSES", 25)
 
 
 def default_ops_per_process() -> int:
-    return env_int("CONQUIET_CONCURRENCY_OPS", 50)
+    return env_int("CONQUIET_CONCURRENCY_OPS", 10)
 
 
 def unique_table(prefix: str) -> str:
