@@ -31,7 +31,7 @@ def _atomic_update_worker(*, engine, worker_id: int, table: str, ops: int) -> No
             print(f"Worker {worker_id} updated value to {session.execute_scalar(f'SELECT value FROM `{table}` WHERE id = 1', {})}")
 
 
-
+@pytest.mark.concurrency
 def test_invariant_atomic_sql_correctness() -> None:
     """
     Invariant 5.2: Atomic SQL correctness.
