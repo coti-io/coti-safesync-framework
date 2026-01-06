@@ -96,9 +96,11 @@ def _worker_entrypoint(
         except Exception:
             # If barrier breaks, still attempt to run to surface root cause.
             pass
-
+        print(f"Worker {worker_id} started")
         fn(engine=engine, worker_id=worker_id, table=table, **fn_kwargs)
+        print(f"Worker {worker_id} finished")
     except BaseException as exc:  # noqa: BLE001 - must propagate any failure
+        print(f"Worker {worker_id} failed: {exc}")
         err_queue.put(
             WorkerError(
                 worker_id=worker_id,
