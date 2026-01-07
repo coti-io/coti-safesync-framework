@@ -2,14 +2,14 @@
 
 ## 1. Purpose
 
-This document defines how **conquiet’s database concurrency primitives** are validated and proven production-ready.
+This document defines how **coti_safesync_framework's database concurrency primitives** are validated and proven production-ready.
 
 Correctness is defined **not** by absence of errors or timing behavior, but by preservation of **invariants** under concurrent execution across multiple processes.
 
 The goal of these tests is to demonstrate that:
 
 * Unsafe concurrency patterns *can* break correctness
-* The synchronization mechanisms provided by conquiet *prevent* such breakage
+* The synchronization mechanisms provided by coti_safesync_framework *prevent* such breakage
 * All guarantees stated in `bootstrap.md` are upheld under load comparable to (or exceeding) production conditions
 
 ---
@@ -38,7 +38,7 @@ These assert that an invariant **must always hold** when using a given synchroni
 
 * If the invariant fails even once → **test failure**
 * These tests must **not** be retried
-* Any failure indicates a correctness bug in conquiet
+* Any failure indicates a correctness bug in coti_safesync_framework
 
 #### B. Demonstration tests (negative tests)
 
@@ -192,7 +192,7 @@ If a correctness test violates its invariant:
 
 * The test **fails immediately**
 * The test is **not retried**
-* This indicates a bug in conquiet
+* This indicates a bug in coti_safesync_framework
 
 ### 7.2 Demonstration tests
 
@@ -222,7 +222,7 @@ If all correctness tests pass under concurrent load:
 * OCC helpers behave as documented
 * No lost updates or silent overwrites occur under supported usage
 
-This constitutes evidence that conquiet’s DB primitives are safe for production use.
+This constitutes evidence that coti_safesync_framework's DB primitives are safe for production use.
 
 ---
 
@@ -240,6 +240,6 @@ They guarantee **correctness when APIs are used as documented**.
 
 ## 11. Summary
 
-> Conquiet’s concurrency guarantees are validated by asserting invariants under real multi-process load, not by observing timing behavior or race symptoms.
+> COTI SafeSync Framework's concurrency guarantees are validated by asserting invariants under real multi-process load, not by observing timing behavior or race symptoms.
 
 ---

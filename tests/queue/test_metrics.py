@@ -5,14 +5,14 @@ import time
 import pytest
 from redis import Redis
 
-from conquiet.config import QueueConfig
-from conquiet.metrics.registry import (
+from coti_safesync_framework.config import QueueConfig
+from coti_safesync_framework.metrics.registry import (
     QUEUE_MESSAGES_ACK_TOTAL,
     QUEUE_MESSAGES_CLAIMED_TOTAL,
     QUEUE_MESSAGES_READ_TOTAL,
     QUEUE_READ_LATENCY_SECONDS,
 )
-from conquiet.queue import RedisStreamsQueue
+from coti_safesync_framework.queue import RedisStreamsQueue
 
 
 class TestQueueReadMetrics:

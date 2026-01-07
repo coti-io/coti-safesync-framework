@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from conquiet.db.locking.row_lock import RowLock
-from conquiet.db.session import DbSession
+from coti_safesync_framework.db.locking.row_lock import RowLock
+from coti_safesync_framework.db.session import DbSession
 
 
 def test_raises_runtime_error_if_dbsession_inactive(engine, fresh_table: str) -> None:

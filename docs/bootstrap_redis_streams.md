@@ -1,8 +1,8 @@
 # `bootstrap_redis_streams.md`
 
-## Conquiet – Redis Streams Queue Subsystem (Low-Level Specification)
+## COTI SafeSync Framework – Redis Streams Queue Subsystem (Low-Level Specification)
 
-This document defines the **complete and authoritative low-level specification** for the **Redis Streams queue subsystem** of the `conquiet` package.
+This document defines the **complete and authoritative low-level specification** for the **Redis Streams queue subsystem** of the `coti_safesync_framework` package.
 
 This subsystem is **fully independent** from the DB subsystem and may be implemented, tested, and reasoned about in isolation.
 
@@ -310,10 +310,10 @@ Rules:
 
 Required metrics:
 
-* `conquiet_queue_messages_read_total{stream}`
-* `conquiet_queue_messages_ack_total{stream}`
-* `conquiet_queue_messages_claimed_total{stream}`
-* `conquiet_queue_read_latency_seconds{stream}`
+* `coti_safesync_queue_messages_read_total{stream}`
+* `coti_safesync_queue_messages_ack_total{stream}`
+* `coti_safesync_queue_messages_claimed_total{stream}`
+* `coti_safesync_queue_read_latency_seconds{stream}`
 
 Metrics must:
 

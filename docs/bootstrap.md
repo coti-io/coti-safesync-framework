@@ -1,8 +1,8 @@
-# 🧭 `bootstrap.md` — Conquiet (v2)
+# 🧭 `bootstrap.md` — COTI SafeSync Framework (v2)
 
 ## Purpose
 
-This document defines the **authoritative low-level design** of **conquiet**, a Python package for **safe concurrent database and queue operations** in multi-process, multi-host backend systems.
+This document defines the **authoritative low-level design** of **coti_safesync_framework**, a Python package for **safe concurrent database and queue operations** in multi-process, multi-host backend systems.
 
 This document supersedes all previous bootstrap or design documents.
 It reflects the final, refined architecture after initial implementation and validation.
@@ -17,7 +17,7 @@ The intent of this document is to:
 
 ## 1. High-Level Overview
 
-**conquiet** is an internal Python infrastructure library used across backend services to:
+**coti_safesync_framework** is an internal Python infrastructure library used across backend services to:
 
 1. Safely perform **concurrent MySQL writes** (insert and update)
 2. Safely consume and acknowledge **Redis Streams queues**
@@ -27,10 +27,10 @@ The intent of this document is to:
 
 ### Non-goals
 
-* conquiet does **not** own application lifecycle
-* conquiet does **not** manage schema creation
-* conquiet does **not** hide SQL or business logic
-* conquiet does **not** provide ORM abstractions
+* coti_safesync_framework does **not** own application lifecycle
+* coti_safesync_framework does **not** manage schema creation
+* coti_safesync_framework does **not** hide SQL or business logic
+* coti_safesync_framework does **not** provide ORM abstractions
 
 ---
 
@@ -41,7 +41,7 @@ The intent of this document is to:
    * Locks, transactions, and concurrency strategies must be explicit
 2. **Primitives, not workflows**
 
-   * conquiet exposes building blocks, not full pipelines
+   * coti_safesync_framework exposes building blocks, not full pipelines
 3. **Control stays with the user**
 
    * Users compose logic inside locks and transactions
@@ -166,7 +166,7 @@ This design maximizes throughput and supports at-least-once delivery semantics.
 For idempotent INSERTs, use the dedicated helper:
 
 ```python
-from conquiet.db.helpers import insert_idempotent
+from coti_safesync_framework.db.helpers import insert_idempotent
 
 with DbSession(engine) as session:
     inserted = insert_idempotent(
@@ -265,7 +265,7 @@ if rows == 0:
 
 ### Design decision
 
-conquiet **does not raise by default** for OCC failures.
+coti_safesync_framework **does not raise by default** for OCC failures.
 Caller intent determines semantics.
 
 ---
@@ -345,7 +345,7 @@ with db.session() as session:
 
 ### 8.3 Lock Composition
 
-conquiet does **not** provide combined locks.
+coti_safesync_framework does **not** provide combined locks.
 
 If users want both advisory and row locks, they compose explicitly:
 
@@ -383,7 +383,7 @@ DB and queue subsystems are **fully decoupled**.
 3. User processes message
 4. User explicitly ACKs message
 
-conquiet does **not** auto-process messages.
+coti_safesync_framework does **not** auto-process messages.
 
 ---
 
@@ -391,9 +391,9 @@ conquiet does **not** auto-process messages.
 
 ### Ownership
 
-* conquiet does **not** own SIGTERM or SIGINT by default
+* coti_safesync_framework does **not** own SIGTERM or SIGINT by default
 * Application owns lifecycle
-* conquiet exposes explicit stop methods
+* coti_safesync_framework exposes explicit stop methods
 
 ### Queue Consumer
 
@@ -425,7 +425,7 @@ User may install their own SIGTERM handler and call `stop()`.
 
 ## 11. Metrics & Observability
 
-conquiet exposes Prometheus metrics for:
+coti_safesync_framework exposes Prometheus metrics for:
 
 * DB operations (counts, latency)
 * Duplicate inserts
@@ -433,7 +433,7 @@ conquiet exposes Prometheus metrics for:
 * Queue reads, ACKs, claims
 * Stale message recovery
 
-conquiet does **not** expose an HTTP server.
+coti_safesync_framework does **not** expose an HTTP server.
 
 ---
 
@@ -452,7 +452,7 @@ conquiet does **not** expose an HTTP server.
 
 ## 13. Summary
 
-conquiet is a **concurrency-control toolkit**, not a workflow engine.
+coti_safesync_framework is a **concurrency-control toolkit**, not a workflow engine.
 
 It provides:
 
@@ -466,7 +466,7 @@ All concurrency behavior is **visible, intentional, and testable**.
 
 ## 3. Database Assumptions & Guarantees
 
-conquiet is designed specifically for **MySQL with the InnoDB storage engine**.
+coti_safesync_framework is designed specifically for **MySQL with the InnoDB storage engine**.
 
 ### Required assumptions
 
@@ -491,7 +491,7 @@ conquiet is designed specifically for **MySQL with the InnoDB storage engine**.
 Under **REPEATABLE READ**, MySQL may acquire **gap locks**:
 - Inserts into locked index ranges may block
 - Unexpected contention may occur
-- This is MySQL behavior, not a conquiet bug
+- This is MySQL behavior, not a coti_safesync_framework bug
 
 Users should:
 - Prefer **READ COMMITTED** unless gap-lock behavior is explicitly desired
@@ -521,7 +521,7 @@ Important notes:
 - For INSERT and INSERT IGNORE:
   - Behavior follows MySQL driver semantics
 
-conquiet does **not normalize or reinterpret rowcount**.
+coti_safesync_framework does **not normalize or reinterpret rowcount**.
 The raw database behavior is exposed intentionally.
 
 Callers must interpret `rowcount` in the context of their SQL.
@@ -561,7 +561,7 @@ Users must:
 
 ### Optimistic Concurrency Control (OCC)
 
-Conquiet provides a low-level OCC helper (`occ_update`), but correctness depends
+COTI SafeSync Framework provides a low-level OCC helper (`occ_update`), but correctness depends
 on strict usage rules regarding transaction boundaries and retries.
 
 **All users MUST read:** `docs/occ.md`

@@ -5,9 +5,9 @@ import time
 import pytest
 from redis import Redis
 
-from conquiet.config import QueueConfig
-from conquiet.errors import QueueError
-from conquiet.queue import QueueMessage, RedisStreamsQueue
+from coti_safesync_framework.config import QueueConfig
+from coti_safesync_framework.errors import QueueError
+from coti_safesync_framework.queue import QueueMessage, RedisStreamsQueue
 
 
 class TestConsumerGroupInitialization:

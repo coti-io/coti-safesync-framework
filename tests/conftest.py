@@ -10,7 +10,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 
 
-DEFAULT_TEST_DB_URL = "mysql+pymysql://test_user:test_password@127.0.0.1:3306/test_db"
+DEFAULT_TEST_DB_URL = "mysql+pymysql://test_user:test_password@127.0.0.1:3307/test_db"
 
 
 @pytest.fixture(scope="session")
@@ -18,10 +18,10 @@ def mysql_url() -> str:
     """
     MySQL connection URL for unit tests.
 
-    Prefer setting CONQUIET_TEST_DB_URL explicitly. If not set, we fall back to
-    the docker-compose defaults in /Users/oded/Projects/COTI/conquiet/docker-compose.yml.
+    Prefer setting COTI_SAFESYNC_TEST_DB_URL explicitly. If not set, we fall back to
+    the docker-compose defaults in docker-compose.yml.
     """
-    return os.environ.get("CONQUIET_TEST_DB_URL", DEFAULT_TEST_DB_URL)
+    return os.environ.get("COTI_SAFESYNC_TEST_DB_URL", DEFAULT_TEST_DB_URL)
 
 
 @pytest.fixture(scope="session")
@@ -38,7 +38,7 @@ def engine(mysql_url: str) -> Iterator[Engine]:
     except Exception as exc:  # pragma: no cover
         pytest.fail(
             "MySQL test database is not reachable.\n"
-            f"- CONQUIET_TEST_DB_URL={mysql_url!r}\n"
+            f"- COTI_SAFESYNC_TEST_DB_URL={mysql_url!r}\n"
             "- If using docker-compose: run `docker compose up -d mysql` and wait for healthcheck.\n"
             f"- Underlying error: {exc}",
             pytrace=False,

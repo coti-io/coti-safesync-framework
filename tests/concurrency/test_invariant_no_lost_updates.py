@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import pytest
 
-from conquiet.db.locking.advisory_lock import AdvisoryLock
-from conquiet.db.locking.row_lock import RowLock
-from conquiet.db.session import DbSession
+from coti_safesync_framework.db.locking.advisory_lock import AdvisoryLock
+from coti_safesync_framework.db.locking.row_lock import RowLock
+from coti_safesync_framework.db.session import DbSession
 
 from ._harness import (
     create_counter_table,
@@ -65,7 +65,7 @@ def _rmg_with_advisory_and_row_lock_worker(
 @pytest.mark.concurrency
 def test_invariant_no_lost_updates_rowlock_correctness() -> None:
     engine = make_engine()
-    table = unique_table("conquiet_conc_rmw_rowlock")
+    table = unique_table("coti_safesync_conc_rmw_rowlock")
     create_counter_table(engine, table)
     seed_counter(engine, table, value=0)
 
@@ -90,14 +90,14 @@ def test_invariant_no_lost_updates_rowlock_correctness() -> None:
 @pytest.mark.concurrency
 def test_invariant_no_lost_updates_advisorylock_correctness() -> None:
     engine = make_engine()
-    table = unique_table("conquiet_conc_rmw_advisory")
+    table = unique_table("coti_safesync_conc_rmw_advisory")
     create_counter_table(engine, table)
     seed_counter(engine, table, value=0)
 
     processes = default_processes()
     ops = default_ops_per_process()
     expected = processes * ops
-    key = f"conquiet_demo_rmw:{table}:1"
+    key = f"coti_safesync_demo_rmw:{table}:1"
 
     import multiprocessing as mp
 
@@ -116,14 +116,14 @@ def test_invariant_no_lost_updates_advisorylock_correctness() -> None:
 @pytest.mark.concurrency
 def test_invariant_no_lost_updates_advisory_plus_row_correctness() -> None:
     engine = make_engine()
-    table = unique_table("conquiet_conc_rmw_advisory_row")
+    table = unique_table("coti_safesync_conc_rmw_advisory_row")
     create_counter_table(engine, table)
     seed_counter(engine, table, value=0)
 
     processes = default_processes()
     ops = default_ops_per_process()
     expected = processes * ops
-    key = f"conquiet_demo_rmw:{table}:1"
+    key = f"coti_safesync_demo_rmw:{table}:1"
 
     import multiprocessing as mp
 
@@ -152,7 +152,7 @@ def test_invariant_no_lost_updates_unsynchronized_demo() -> None:
 
     def attempt() -> bool:
         engine = make_engine()
-        table = unique_table("conquiet_conc_rmw_nolock")
+        table = unique_table("coti_safesync_conc_rmw_nolock")
         create_counter_table(engine, table)
         seed_counter(engine, table, value=0)
 

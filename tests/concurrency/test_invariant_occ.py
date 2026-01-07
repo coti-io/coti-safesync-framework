@@ -6,8 +6,8 @@ import time
 import pytest
 from sqlalchemy.exc import OperationalError
 
-from conquiet.db.helpers import occ_update
-from conquiet.db.session import DbSession
+from coti_safesync_framework.db.helpers import occ_update
+from coti_safesync_framework.db.session import DbSession
 
 from ._harness import (
     create_counter_table,
@@ -139,7 +139,7 @@ def test_invariant_occ_correctness_with_retry() -> None:
     - Final value == initial + total successful updates
     """
     engine = make_engine()
-    table = unique_table("conquiet_conc_occ_retry")
+    table = unique_table("coti_safesync_conc_occ_retry")
     create_counter_table(engine, table)
     seed_counter(engine, table, value=0, version=0)
 
@@ -181,7 +181,7 @@ def test_invariant_occ_demo_without_retry() -> None:
 
     def attempt() -> bool:
         engine = make_engine()
-        table = unique_table("conquiet_conc_occ_noretry")
+        table = unique_table("coti_safesync_conc_occ_noretry")
         create_counter_table(engine, table)
         seed_counter(engine, table, value=0, version=0)
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from conquiet.db.session import DbSession
+from coti_safesync_framework.db.session import DbSession
 
 from ._harness import (
     create_counter_table,
@@ -42,7 +42,7 @@ def test_invariant_atomic_sql_correctness() -> None:
     Invariant: Final value equals number of UPDATE statements executed.
     """
     engine = make_engine()
-    table = unique_table("conquiet_conc_atomic")
+    table = unique_table("coti_safesync_conc_atomic")
     create_counter_table(engine, table)
     seed_counter(engine, table, value=0)
 

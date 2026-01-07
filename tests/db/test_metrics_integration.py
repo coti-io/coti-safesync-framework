@@ -3,10 +3,10 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import text
 
-from conquiet.db.locking.advisory_lock import AdvisoryLock
-from conquiet.db.locking.row_lock import RowLock
-from conquiet.db.session import DbSession
-from conquiet.metrics.registry import (
+from coti_safesync_framework.db.locking.advisory_lock import AdvisoryLock
+from coti_safesync_framework.db.locking.row_lock import RowLock
+from coti_safesync_framework.db.session import DbSession
+from coti_safesync_framework.metrics.registry import (
     DB_LOCK_ACQUIRE_LATENCY_SECONDS,
     DB_WRITE_LATENCY_SECONDS,
     DB_WRITE_TOTAL,

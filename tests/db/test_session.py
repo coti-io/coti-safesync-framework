@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import text
 
-from conquiet.db.session import DbSession
+from coti_safesync_framework.db.session import DbSession
 
 
 def _insert_two_rows(session: DbSession, table: str) -> None:
@@ -124,10 +124,10 @@ def test_execute_raises_if_rowcount_is_none_probe_or_skip(engine) -> None:
     """
     probe_sqls = [
         # DDL and utility statements that might produce driver-specific rowcount semantics.
-        "CREATE TEMPORARY TABLE IF NOT EXISTS tmp_conquiet_probe (id INT) ENGINE=InnoDB",
-        "DROP TEMPORARY TABLE IF EXISTS tmp_conquiet_probe",
+        "CREATE TEMPORARY TABLE IF NOT EXISTS tmp_coti_safesync_probe (id INT) ENGINE=InnoDB",
+        "DROP TEMPORARY TABLE IF EXISTS tmp_coti_safesync_probe",
         "DO 1",
-        "SET @conquiet_probe := 1",
+        "SET @coti_safesync_probe := 1",
     ]
 
     found_none_rowcount = False

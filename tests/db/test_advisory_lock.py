@@ -4,12 +4,12 @@ import uuid
 
 import pytest
 
-from conquiet.db.locking.advisory_lock import AdvisoryLock
-from conquiet.db.session import DbSession
-from conquiet.errors import LockTimeoutError
+from coti_safesync_framework.db.locking.advisory_lock import AdvisoryLock
+from coti_safesync_framework.db.session import DbSession
+from coti_safesync_framework.errors import LockTimeoutError
 
 
-def _lock_key(prefix: str = "conquiet_test") -> str:
+def _lock_key(prefix: str = "coti_safesync_test") -> str:
     # Keep comfortably under MySQL's 64-char advisory lock name limit.
     return f"{prefix}:{uuid.uuid4().hex[:24]}"
 

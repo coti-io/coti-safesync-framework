@@ -1,6 +1,6 @@
-# Conquiet Usage Guide for AI Agents
+# COTI SafeSync Framework Usage Guide for AI Agents
 
-This document provides a practical reference for AI agents on how to use the `conquiet` library's DB and Redis Streams components.
+This document provides a practical reference for AI agents on how to use the `coti_safesync_framework` library's DB and Redis Streams components.
 
 ---
 
@@ -33,7 +33,7 @@ This document provides a practical reference for AI agents on how to use the `co
 
 ```python
 from sqlalchemy import create_engine
-from conquiet.db.session import DbSession
+from coti_safesync_framework.db.session import DbSession
 
 # Create engine (typically done once at application startup)
 engine = create_engine("mysql+pymysql://user:password@host/database")
@@ -92,7 +92,7 @@ class DbSession:
 For idempotent INSERT operations (safe under concurrent execution), use the `insert_idempotent` helper. It suppresses duplicate-key errors and returns `True` if inserted, `False` if already existed.
 
 ```python
-from conquiet.db.helpers import insert_idempotent
+from coti_safesync_framework.db.helpers import insert_idempotent
 
 with DbSession(engine) as session:
     inserted = insert_idempotent(
@@ -118,7 +118,7 @@ For conditional updates based on version checking, use the `occ_update` helper. 
 **⚠️ CRITICAL USAGE PATTERN**: Each OCC attempt must use its own `DbSession`. Retry when `rowcount == 0`.
 
 ```python
-from conquiet.db.helpers import occ_update
+from coti_safesync_framework.db.helpers import occ_update
 
 MAX_RETRIES = 10
 
@@ -318,8 +318,8 @@ with DbSession(engine) as session:
 
 ```python
 from redis import Redis
-from conquiet.config import QueueConfig
-from conquiet.queue.consumer import QueueConsumer
+from coti_safesync_framework.config import QueueConfig
+from coti_safesync_framework.queue.consumer import QueueConsumer
 
 # Create Redis client
 redis_client = Redis(host="localhost", port=6379, db=0)
@@ -365,8 +365,8 @@ The `run()` method provides a template that:
 
 ```python
 from sqlalchemy import create_engine
-from conquiet.queue.models import QueueMessage
-from conquiet.db.session import DbSession
+from coti_safesync_framework.queue.models import QueueMessage
+from coti_safesync_framework.db.session import DbSession
 
 engine = create_engine("mysql+pymysql://user:password@host/database")
 
@@ -426,7 +426,7 @@ while True:
 
 ```python
 import signal
-from conquiet.signals import install_termination_handlers
+from coti_safesync_framework.signals import install_termination_handlers
 
 # Install signal handlers for graceful shutdown
 install_termination_handlers(consumer.stop)
@@ -452,8 +452,8 @@ consumer.stop()
 #### Enqueueing Messages
 
 ```python
-from conquiet.config import QueueConfig
-from conquiet.queue.redis_streams import RedisStreamsQueue
+from coti_safesync_framework.config import QueueConfig
+from coti_safesync_framework.queue.redis_streams import RedisStreamsQueue
 
 redis_client = Redis(host="localhost", port=6379, db=0)
 
@@ -490,7 +490,7 @@ for msg in messages:
 #### Acknowledging Messages
 
 ```python
-from conquiet.queue.models import QueueMessage
+from coti_safesync_framework.queue.models import QueueMessage
 
 # After processing a message
 queue.ack(msg)  # msg is a QueueMessage object
@@ -521,7 +521,7 @@ def handle_message(msg: QueueMessage, session: DbSession) -> None:
     event_id = msg.payload["event_id"]
     
     # Use idempotent insert to handle duplicates
-    from conquiet.db.helpers import insert_idempotent
+    from coti_safesync_framework.db.helpers import insert_idempotent
     
     inserted = insert_idempotent(
         session=session,

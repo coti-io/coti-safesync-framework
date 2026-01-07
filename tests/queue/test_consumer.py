@@ -9,10 +9,10 @@ import pytest
 from redis import Redis
 from sqlalchemy.engine import Engine
 
-from conquiet.config import QueueConfig
-from conquiet.db.session import DbSession
-from conquiet.errors import QueueError
-from conquiet.queue import QueueConsumer, QueueMessage, RedisStreamsQueue
+from coti_safesync_framework.config import QueueConfig
+from coti_safesync_framework.db.session import DbSession
+from coti_safesync_framework.errors import QueueError
+from coti_safesync_framework.queue import QueueConsumer, QueueMessage, RedisStreamsQueue
 
 
 def _poll_until(condition, timeout: float = 2.0, interval: float = 0.05) -> None:
@@ -299,7 +299,7 @@ class TestRun:
                 with patch.object(redis_client, "xpending_range", return_value=[{"message_id": test_msg.id}]):
                     # Mock DbSession to be a no-op context manager
                     mock_session = MagicMock(spec=DbSession)
-                    with patch("conquiet.queue.consumer.DbSession", return_value=mock_session):
+                    with patch("coti_safesync_framework.queue.consumer.DbSession", return_value=mock_session):
                         # Handler that raises
                         def handler(msg: QueueMessage, session: DbSession) -> None:
                             raise ValueError("Handler error")
@@ -373,7 +373,7 @@ class TestRun:
                         return False
                     mock_session.__exit__ = failing_exit
 
-                    with patch("conquiet.queue.consumer.DbSession", return_value=mock_session):
+                    with patch("coti_safesync_framework.queue.consumer.DbSession", return_value=mock_session):
                         # Run should propagate the commit failure
                         with pytest.raises(RuntimeError, match="Commit failed"):
                             consumer.run(handler=handler, engine=mock_engine)

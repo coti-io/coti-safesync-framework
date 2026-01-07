@@ -1,9 +1,9 @@
 ````markdown
-# conquiet – Bootstrap Specification
+# coti-safesync-framework – Bootstrap Specification
 
-This document describes the architecture and low-level design of the **`conquiet`** Python package so that code can be generated methodically and precisely.
+This document describes the architecture and low-level design of the **`coti_safesync_framework`** Python package so that code can be generated methodically and precisely.
 
-`conquiet` (concurrent + quiet) is an internal library used across backend services at COTI to provide:
+`coti_safesync_framework` (COTI SafeSync Framework) is an internal library used across backend services at COTI to provide:
 
 - **Safe concurrent MySQL writes** (INSERT and UPDATE) from multiple hosts/processes.
 - **Safe concurrent queue operations** using Redis Streams (multi-host consumer groups).
@@ -48,7 +48,7 @@ The **DB subsystem** and the **Queue subsystem** are **completely independent**.
 Create the following package structure:
 
 ```text
-conquiet/
+coti_safesync_framework/
   __init__.py
   config.py
   errors.py
@@ -102,7 +102,7 @@ __all__ = ["DbWriter", "LockStrategy", "RedisStreamsQueue", "QueueConsumer"]
 
 ## 3. Shared Configuration & Errors
 
-### 3.1 `conquiet/config.py`
+### 3.1 `coti_safesync_framework/config.py`
 
 Provide basic configuration dataclasses used by both subsystems.
 
@@ -127,21 +127,21 @@ class QueueConfig:
     max_read_count: int = 1
 ```
 
-### 3.2 `conquiet/errors.py`
+### 3.2 `coti_safesync_framework/errors.py`
 
 Define library-specific exceptions:
 
 ```python
-class ConquietError(Exception):
-    """Base exception for conquiet errors."""
+class SafeSyncError(Exception):
+    """Base exception for coti_safesync_framework errors."""
 
-class DbWriteError(ConquietError):
+class DbWriteError(SafeSyncError):
     """Any failure during DB write."""
 
-class LockAcquisitionError(ConquietError):
+class LockAcquisitionError(SafeSyncError):
     """Failed to acquire a lock within the expected constraints."""
 
-class QueueError(ConquietError):
+class QueueError(SafeSyncError):
     """General queue-related issues."""
 ```
 
@@ -149,7 +149,7 @@ class QueueError(ConquietError):
 
 ## 4. Signal Handling
 
-### 4.1 `conquiet/signals.py`
+### 4.1 `coti_safesync_framework/signals.py`
 
 Provide simple helpers to install SIGTERM/SIGINT handlers that call a provided callback.
 
@@ -187,7 +187,7 @@ INSERT operations are idempotent and non-locking. They rely on MySQL uniqueness 
 
 UPDATE operations are correctness-critical and may involve read–modify–write cycles. UPDATE operations may be executed with configurable locking strategies to prevent lost updates under concurrent access.
 
-### 5.1 Models: `conquiet/db/models.py`
+### 5.1 Models: `coti_safesync_framework/db/models.py`
 
 Define data types representing DB operations:
 
@@ -213,7 +213,7 @@ class DbOperation:
     metadata: Optional[Mapping[str, Any]] = None
 ```
 
-### 5.2 Lock Strategies: `conquiet/db/locking/strategy.py`
+### 5.2 Lock Strategies: `coti_safesync_framework/db/locking/strategy.py`
 
 Define the lock strategy enumeration:
 
@@ -266,7 +266,7 @@ INSERT operations never acquire locks, regardless of the configured LockStrategy
 This is an intentional design decision to maximize throughput for idempotent inserts while preserving correctness for concurrent updates.
 
 
-### 5.3 Lock Backend Base: `conquiet/db/locking/base.py`
+### 5.3 Lock Backend Base: `coti_safesync_framework/db/locking/base.py`
 
 Locks should operate **on the same DB connection/transaction** that the writer uses. Therefore, lock backends receive a `Connection` object instead of using the engine directly.
 
@@ -292,7 +292,7 @@ class LockBackend(ABC):
         ...
 ```
 
-### 5.4 Advisory Lock Backend: `conquiet/db/locking/advisory_mysql.py`
+### 5.4 Advisory Lock Backend: `coti_safesync_framework/db/locking/advisory_mysql.py`
 
 Uses MySQL `GET_LOCK` and `RELEASE_LOCK` with a lock name derived from the table and id.
 
@@ -304,7 +304,7 @@ from ..models import DbOperation
 from ...errors import LockAcquisitionError
 
 class MySQLAdvisoryLockBackend(LockBackend):
-    def __init__(self, lock_timeout: int = 10, prefix: str = "conquiet_lock"):
+    def __init__(self, lock_timeout: int = 10, prefix: str = "coti_safesync_framework_lock"):
         self.lock_timeout = lock_timeout
         self.prefix = prefix
 
@@ -325,7 +325,7 @@ class MySQLAdvisoryLockBackend(LockBackend):
         conn.execute(stmt, {"lock_name": lock_name})
 ```
 
-### 5.5 Row Lock Backend: `conquiet/db/locking/row_mysql.py`
+### 5.5 Row Lock Backend: `coti_safesync_framework/db/locking/row_mysql.py`
 
 Uses `SELECT ... FOR UPDATE` to lock the row within the active transaction. It assumes that either the row exists or a gap lock will protect inserts.
 
@@ -352,7 +352,7 @@ class MySQLRowLockBackend(LockBackend):
         return None
 ```
 
-### 5.6 Table Lock Backend: `conquiet/db/locking/table_mysql.py`
+### 5.6 Table Lock Backend: `coti_safesync_framework/db/locking/table_mysql.py`
 
 Uses `LOCK TABLES ... WRITE` / `UNLOCK TABLES`. These must be on the same connection as the write.
 
@@ -371,7 +371,7 @@ class MySQLTableLockBackend(LockBackend):
         conn.execute(text("UNLOCK TABLES"))
 ```
 
-### 5.7 Composite Lock Backend: `conquiet/db/locking/composite.py`
+### 5.7 Composite Lock Backend: `coti_safesync_framework/db/locking/composite.py`
 
 Only used for `ADVISORY_AND_ROW`.
 
@@ -398,7 +398,7 @@ class CompositeLockBackend(LockBackend):
             backend.release(conn, op)
 ```
 
-### 5.8 Lock Backend Factory: `conquiet/db/locking/__init__.py`
+### 5.8 Lock Backend Factory: `coti_safesync_framework/db/locking/__init__.py`
 
 ```python
 from sqlalchemy.engine import Engine
@@ -431,15 +431,15 @@ def make_lock_backend(strategy: LockStrategy, db_config) -> LockBackend | None:
     raise ValueError(f"Unknown lock strategy: {strategy}")
 ```
 
-### 5.9 DB Metrics: `conquiet/db/metrics.py`
+### 5.9 DB Metrics: `coti_safesync_framework/db/metrics.py`
 
 Use `prometheus_client` to define DB-related metrics. Implementation details can be simple counters/histograms.
 
 Metric examples:
 
-* `conquiet_db_write_total{table, op_type, status}` (Counter)
-* `conquiet_db_write_latency_seconds{table, op_type}` (Histogram)
-* `conquiet_db_lock_acquire_latency_seconds{strategy}` (Histogram)
+* `coti_safesync_framework_db_write_total{table, op_type, status}` (Counter)
+* `coti_safesync_framework_db_write_latency_seconds{table, op_type}` (Histogram)
+* `coti_safesync_framework_db_lock_acquire_latency_seconds{strategy}` (Histogram)
 
 Provide helper functions:
 
@@ -451,7 +451,7 @@ def observe_lock_acquisition(strategy: str, latency_s: float, success: bool) -> 
     ...
 ```
 
-### 5.10 DbWriter: `conquiet/db/writer.py`
+### 5.10 DbWriter: `coti_safesync_framework/db/writer.py`
 
 This is the main entry point for DB writes.
 
@@ -573,10 +573,10 @@ Usage example (not part of the file, but for context):
 
 ```python
 from sqlalchemy import create_engine
-from conquiet.db.writer import DbWriter
-from conquiet.db.models import DbOperation, DbOperationType
-from conquiet.db.locking.strategy import LockStrategy
-from conquiet.config import DbConfig
+from coti_safesync_framework.db.writer import DbWriter
+from coti_safesync_framework.db.models import DbOperation, DbOperationType
+from coti_safesync_framework.db.locking.strategy import LockStrategy
+from coti_safesync_framework.config import DbConfig
 
 engine = create_engine("mysql+pymysql://user:pw@host/db")
 db_config = DbConfig(table_name="orders", id_column="id", insert_mode="insert")
@@ -601,7 +601,7 @@ The Queue subsystem provides safe, multi-host consumption of Redis Streams with 
 
 There is **no DB coupling** here. The package **does not** automatically write queue messages to the DB.
 
-### 6.1 Queue Models: `conquiet/queue/models.py`
+### 6.1 Queue Models: `coti_safesync_framework/queue/models.py`
 
 ```python
 from dataclasses import dataclass
@@ -617,7 +617,7 @@ class QueueMessage:
 
 `payload` is a dict of string keys to primitive values. Serialization to/from Redis fields (`{field: value}`) will be done as JSON or simple string mapping depending on design choice (implement with JSON for safety).
 
-### 6.2 Redis Streams Queue: `conquiet/queue/redis_streams.py`
+### 6.2 Redis Streams Queue: `coti_safesync_framework/queue/redis_streams.py`
 
 This class wraps a `redis.Redis` client to operate on a single stream and consumer group.
 
@@ -772,14 +772,14 @@ Guarantees correctness
 
 May reduce throughput depending on strategy
 
-### 6.3 Queue Metrics: `conquiet/queue/metrics.py`
+### 6.3 Queue Metrics: `coti_safesync_framework/queue/metrics.py`
 
 Define Prometheus metrics for queue operations, such as:
 
-* `conquiet_queue_messages_read_total{stream}`
-* `conquiet_queue_messages_ack_total{stream}`
-* `conquiet_queue_messages_claimed_total{stream}`
-* `conquiet_queue_read_latency_seconds{stream}`
+* `coti_safesync_framework_queue_messages_read_total{stream}`
+* `coti_safesync_framework_queue_messages_ack_total{stream}`
+* `coti_safesync_framework_queue_messages_claimed_total{stream}`
+* `coti_safesync_framework_queue_read_latency_seconds{stream}`
 
 Provide small helper functions:
 
@@ -794,7 +794,7 @@ def observe_queue_claim(stream: str, claimed_count: int) -> None:
     ...
 ```
 
-### 6.4 Queue Consumer (Worker-like abstraction): `conquiet/queue/consumer.py`
+### 6.4 Queue Consumer (Worker-like abstraction): `coti_safesync_framework/queue/consumer.py`
 
 The **QueueConsumer** is an optional, worker-like abstraction that:
 
@@ -919,7 +919,7 @@ for msg in consumer.iter_messages():
 
 ---
 
-## 7. Metrics Registry: `conquiet/metrics/registry.py`
+## 7. Metrics Registry: `coti_safesync_framework/metrics/registry.py`
 
 Central place to initialize and expose Prometheus metrics. This can be a thin wrapper around `prometheus_client`.
 
@@ -928,44 +928,44 @@ from prometheus_client import Counter, Histogram
 
 # Example DB metrics
 DB_WRITE_TOTAL = Counter(
-    "conquiet_db_write_total",
+    "coti_safesync_framework_db_write_total",
     "Total DB write operations",
     ["table", "op_type", "status"],
 )
 
 DB_WRITE_LATENCY_SECONDS = Histogram(
-    "conquiet_db_write_latency_seconds",
+    "coti_safesync_framework_db_write_latency_seconds",
     "Latency of DB write operations",
     ["table", "op_type"],
 )
 
 DB_LOCK_ACQUIRE_LATENCY_SECONDS = Histogram(
-    "conquiet_db_lock_acquire_latency_seconds",
+    "coti_safesync_framework_db_lock_acquire_latency_seconds",
     "Latency of DB lock acquisition",
     ["strategy"],
 )
 
 # Example Queue metrics
 QUEUE_MESSAGES_READ_TOTAL = Counter(
-    "conquiet_queue_messages_read_total",
+    "coti_safesync_framework_queue_messages_read_total",
     "Total queue messages read",
     ["stream"],
 )
 
 QUEUE_MESSAGES_ACK_TOTAL = Counter(
-    "conquiet_queue_messages_ack_total",
+    "coti_safesync_framework_queue_messages_ack_total",
     "Total queue messages acknowledged",
     ["stream"],
 )
 
 QUEUE_MESSAGES_CLAIMED_TOTAL = Counter(
-    "conquiet_queue_messages_claimed_total",
+    "coti_safesync_framework_queue_messages_claimed_total",
     "Total stale queue messages claimed",
     ["stream"],
 )
 
 QUEUE_READ_LATENCY_SECONDS = Histogram(
-    "conquiet_queue_read_latency_seconds",
+    "coti_safesync_framework_queue_read_latency_seconds",
     "Latency of queue reads",
     ["stream"],
 )
@@ -1019,7 +1019,7 @@ The `db/metrics.py` and `queue/metrics.py` modules should import and use these m
 
 ## 9. Summary of Key Design Decisions
 
-* The package is named **`conquiet`**.
+* The package is named **`coti_safesync_framework`**.
 * DB and Queue subsystems are **independent**; **no coupling**.
 * **DB subsystem**:
 
@@ -1047,7 +1047,7 @@ The `db/metrics.py` and `queue/metrics.py` modules should import and use these m
   * `pytest` + integration tests with real MySQL + Redis.
   * Coverage enforced.
 
-This `bootstrap.md` describes the complete architecture and low-level design of `conquiet`. Code generation should follow this structure, names, data models, and patterns exactly.
+This `bootstrap.md` describes the complete architecture and low-level design of `coti_safesync_framework`. Code generation should follow this structure, names, data models, and patterns exactly.
 
 ```
 ```

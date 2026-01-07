@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from conquiet.db.helpers import insert_idempotent
-from conquiet.db.session import DbSession
+from coti_safesync_framework.db.helpers import insert_idempotent
+from coti_safesync_framework.db.session import DbSession
 
 from ._harness import (
     create_counter_table,
@@ -42,7 +42,7 @@ def test_invariant_idempotent_insert_correctness() -> None:
     Invariant: At most one row exists for the given primary key.
     """
     engine = make_engine()
-    table = unique_table("conquiet_conc_idempotent_insert")
+    table = unique_table("coti_safesync_conc_idempotent_insert")
     create_counter_table(engine, table)
 
     processes = default_processes()

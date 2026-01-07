@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from conquiet.db.helpers import occ_update
-from conquiet.db.session import DbSession
+from coti_safesync_framework.db.helpers import occ_update
+from coti_safesync_framework.db.session import DbSession
 
 
 def test_occ_update_returns_1_and_increments_version_on_match(engine, fresh_table: str) -> None:

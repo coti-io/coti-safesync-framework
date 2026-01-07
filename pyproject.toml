@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "conquiet"
+name = "coti-safesync-framework"
 version = "0.1.0"
 description = "Safe concurrent MySQL writes and Redis Streams queue operations"
 readme = "README.md"
@@ -41,7 +41,7 @@ dev = [
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["conquiet*"]
+include = ["coti_safesync_framework*"]
 
 [tool.black]
 line-length = 88
@@ -59,7 +59,7 @@ testpaths = ["tests"]
 python_files = "test_*.py"
 python_classes = "Test*"
 python_functions = "test_*"
-addopts = "--cov=conquiet --cov-report=xml --cov-report=html --cov-report=term"
+addopts = "--cov=coti_safesync_framework --cov-report=xml --cov-report=html --cov-report=term"
 markers = [
     "concurrency: multi-process concurrency invariant tests (run with -m concurrency)",
     "demo: probabilistic demonstrations of unsafety (run with -m demo)",

@@ -80,7 +80,7 @@ UNDER NO CIRCUMSTANCES SHOULD THIS LOOP RETRY A MESSAGE.
 ```
 
 ## 1.2 Alignment with Database Layer
-QueueConsumer integrates directly with Conquiet’s DbSession.
+QueueConsumer integrates directly with COTI SafeSync Framework's DbSession.
 
 A DbSession represents a single database transaction and must be scoped
 to a single message handling attempt.

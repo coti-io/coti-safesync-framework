@@ -1,6 +1,6 @@
 # Locking and Synchronization Strategies
 
-This document explains all concurrency control strategies available in `conquiet` for safe concurrent database operations.
+This document explains all concurrency control strategies available in `coti_safesync_framework` for safe concurrent database operations.
 
 ## Table of Contents
 
@@ -36,8 +36,8 @@ You have multiple worker processes that need to claim and process orders. Only o
 ### Example
 
 ```python
-from conquiet.db.session import DbSession
-from conquiet.db.locking.row_lock import RowLock
+from coti_safesync_framework.db.session import DbSession
+from coti_safesync_framework.db.locking.row_lock import RowLock
 
 def process_order(engine, order_id: int) -> None:
     """
@@ -96,8 +96,8 @@ Multiple processes read account balances frequently, but updates are less common
 ### Example
 
 ```python
-from conquiet.db.session import DbSession
-from conquiet.db.helpers import occ_update
+from coti_safesync_framework.db.session import DbSession
+from coti_safesync_framework.db.helpers import occ_update
 import random
 import time
 
@@ -177,9 +177,9 @@ Multiple workers process user data across multiple tables. You want to ensure on
 ### Example
 
 ```python
-from conquiet.db.session import DbSession
-from conquiet.db.locking.advisory_lock import AdvisoryLock
-from conquiet.errors import LockTimeoutError
+from coti_safesync_framework.db.session import DbSession
+from coti_safesync_framework.db.locking.advisory_lock import AdvisoryLock
+from coti_safesync_framework.errors import LockTimeoutError
 
 def process_user_data(engine, user_id: int) -> None:
     """
@@ -253,10 +253,10 @@ You need to ensure only one worker processes orders for a specific customer (adv
 ### Example
 
 ```python
-from conquiet.db.session import DbSession
-from conquiet.db.locking.advisory_lock import AdvisoryLock
-from conquiet.db.locking.row_lock import RowLock
-from conquiet.errors import LockTimeoutError
+from coti_safesync_framework.db.session import DbSession
+from coti_safesync_framework.db.locking.advisory_lock import AdvisoryLock
+from coti_safesync_framework.db.locking.row_lock import RowLock
+from coti_safesync_framework.errors import LockTimeoutError
 
 def process_order_with_inventory(engine, order_id: int, customer_id: int) -> None:
     """
@@ -348,7 +348,7 @@ Multiple workers need to increment counters or update simple values. The operati
 ### Example
 
 ```python
-from conquiet.db.session import DbSession
+from coti_safesync_framework.db.session import DbSession
 
 def increment_page_views(engine, page_id: int) -> None:
     """
@@ -406,7 +406,7 @@ Multiple workers attempt to create the same record (e.g., initializing user prof
 ### Example
 
 ```python
-from conquiet.db.session import DbSession
+from coti_safesync_framework.db.session import DbSession
 from sqlalchemy.exc import IntegrityError
 
 def create_user_profile(engine, user_id: int, initial_data: dict) -> None:

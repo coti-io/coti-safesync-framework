@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from conquiet.db.metrics import observe_db_write, observe_lock_acquisition
-from conquiet.metrics.registry import (
+from coti_safesync_framework.db.metrics import observe_db_write, observe_lock_acquisition
+from coti_safesync_framework.metrics.registry import (
     DB_LOCK_ACQUIRE_LATENCY_SECONDS,
     DB_WRITE_LATENCY_SECONDS,
     DB_WRITE_TOTAL,

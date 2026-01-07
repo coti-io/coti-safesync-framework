@@ -10,14 +10,14 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 
-from conquiet.db.session import DbSession
+from coti_safesync_framework.db.session import DbSession
 
 
-DEFAULT_TEST_DB_URL = "mysql+pymysql://test_user:test_password@127.0.0.1:3306/test_db"
+DEFAULT_TEST_DB_URL = "mysql+pymysql://test_user:test_password@127.0.0.1:3307/test_db"
 
 
 def mysql_url() -> str:
-    return os.environ.get("CONQUIET_TEST_DB_URL", DEFAULT_TEST_DB_URL)
+    return os.environ.get("COTI_SAFESYNC_TEST_DB_URL", DEFAULT_TEST_DB_URL)
 
 
 def make_engine() -> Engine:
@@ -33,11 +33,11 @@ def env_int(name: str, default: int) -> int:
 
 
 def default_processes() -> int:
-    return env_int("CONQUIET_CONCURRENCY_PROCESSES", 25)
+    return env_int("COTI_SAFESYNC_CONCURRENCY_PROCESSES", 25)
 
 
 def default_ops_per_process() -> int:
-    return env_int("CONQUIET_CONCURRENCY_OPS", 10)
+    return env_int("COTI_SAFESYNC_CONCURRENCY_OPS", 10)
 
 
 def unique_table(prefix: str) -> str:

@@ -7,7 +7,7 @@ from collections.abc import Callable, Iterator
 import pytest
 from redis import Redis
 
-from conquiet.config import QueueConfig
+from coti_safesync_framework.config import QueueConfig
 
 DEFAULT_TEST_REDIS_URL = "redis://127.0.0.1:6379/0"
 
@@ -17,10 +17,10 @@ def redis_url() -> str:
     """
     Redis connection URL for unit tests.
 
-    Prefer setting CONQUIET_TEST_REDIS_URL explicitly. If not set, we fall back to
+    Prefer setting COTI_SAFESYNC_TEST_REDIS_URL explicitly. If not set, we fall back to
     the docker-compose defaults in docker-compose.yml.
     """
-    return os.environ.get("CONQUIET_TEST_REDIS_URL", DEFAULT_TEST_REDIS_URL)
+    return os.environ.get("COTI_SAFESYNC_TEST_REDIS_URL", DEFAULT_TEST_REDIS_URL)
 
 
 @pytest.fixture(scope="session")
@@ -36,7 +36,7 @@ def redis_client(redis_url: str) -> Iterator[Redis]:
     except Exception as exc:  # pragma: no cover
         pytest.fail(
             "Redis test server is not reachable.\n"
-            f"- CONQUIET_TEST_REDIS_URL={redis_url!r}\n"
+            f"- COTI_SAFESYNC_TEST_REDIS_URL={redis_url!r}\n"
             "- If using docker-compose: run `docker compose up -d redis` and wait for healthcheck.\n"
             f"- Underlying error: {exc}",
             pytrace=False,

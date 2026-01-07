@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from sqlalchemy.exc import IntegrityError
 
-from conquiet.db.session import DbSession
+from coti_safesync_framework.db.session import DbSession
 
 
 def test_dbsession_duplicate_insert_raises_integrity_error(engine, fresh_table: str) -> None:

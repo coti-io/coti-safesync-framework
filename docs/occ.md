@@ -1,10 +1,10 @@
-# Optimistic Concurrency Control (OCC) in Conquiet
+# Optimistic Concurrency Control (OCC) in COTI SafeSync Framework
 
 ## Overview
 
 Optimistic Concurrency Control (OCC) is a concurrency strategy that **detects conflicts instead of preventing them with locks**.
 
-Conquiet provides a low-level helper, `occ_update`, that implements the **atomic SQL primitive** required for OCC.
+COTI SafeSync Framework provides a low-level helper, `occ_update`, that implements the **atomic SQL primitive** required for OCC.
 However, **correctness depends on how the helper is used**, not just on the SQL statement itself.
 
 This document defines the **mandatory usage contract**, explains **why it exists**, and provides **correct and incorrect examples**.
@@ -50,9 +50,9 @@ Rules:
 
 ---
 
-## The OCC Primitive Provided by Conquiet
+## The OCC Primitive Provided by COTI SafeSync Framework
 
-Conquiet exposes the following helper:
+COTI SafeSync Framework exposes the following helper:
 
 ```python
 occ_update(
@@ -121,7 +121,7 @@ Infinite retries are forbidden.
 
 ## ✅ Correct Usage (Reference Pattern)
 
-This is the **canonical OCC pattern** in Conquiet.
+This is the **canonical OCC pattern** in COTI SafeSync Framework.
 
 Use this as your reference.
 
@@ -234,4 +234,4 @@ The demo test intentionally violates the OCC contract to show failure modes.
 * Short transactions are essential
 * Tests validate the contract; this document explains it
 
-If you follow the patterns in this document, OCC in Conquiet is **safe under high concurrency**.
+If you follow the patterns in this document, OCC in COTI SafeSync Framework is **safe under high concurrency**.

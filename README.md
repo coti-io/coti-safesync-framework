@@ -1,8 +1,8 @@
-# Conquiet
+# COTI SafeSync Framework
 
 **Safe concurrent MySQL writes and Redis Streams queue operations**
 
-Conquiet is a Python library for building robust, concurrent backend systems. It provides explicit concurrency control primitives for MySQL and safe message consumption from Redis Streams, designed for multi-process and multi-host environments.
+COTI SafeSync Framework is a Python library for building robust, concurrent backend systems. It provides explicit concurrency control primitives for MySQL and safe message consumption from Redis Streams, designed for multi-process and multi-host environments.
 
 ## Features
 
@@ -16,7 +16,7 @@ Conquiet is a Python library for building robust, concurrent backend systems. It
 ## Installation
 
 ```bash
-pip install conquiet
+pip install coti-safesync-framework
 ```
 
 ## Requirements
@@ -31,7 +31,7 @@ pip install conquiet
 
 ```python
 from sqlalchemy import create_engine
-from conquiet.db.session import DbSession
+from coti_safesync_framework.db.session import DbSession
 
 # Create engine (typically done once at application startup)
 engine = create_engine("mysql+pymysql://user:password@host/database")
@@ -50,10 +50,10 @@ with DbSession(engine) as session:
 
 ```python
 from redis import Redis
-from conquiet.config import QueueConfig
-from conquiet.queue.consumer import QueueConsumer
-from conquiet.db.session import DbSession
-from conquiet.queue.models import QueueMessage
+from coti_safesync_framework.config import QueueConfig
+from coti_safesync_framework.queue.consumer import QueueConsumer
+from coti_safesync_framework.db.session import DbSession
+from coti_safesync_framework.queue.models import QueueMessage
 
 # Setup
 redis_client = Redis(host="localhost", port=6379)
@@ -82,7 +82,7 @@ consumer.run(handler=handle_message, engine=engine)
 For simple operations that can be expressed as a single SQL statement:
 
 ```python
-from conquiet.db.session import DbSession
+from coti_safesync_framework.db.session import DbSession
 
 def increment_counter(engine, counter_id: int) -> None:
     """Increment a counter atomically - no locks needed."""
@@ -99,8 +99,8 @@ def increment_counter(engine, counter_id: int) -> None:
 When you need strict serialization for read-modify-write operations:
 
 ```python
-from conquiet.db.session import DbSession
-from conquiet.db.locking.row_lock import RowLock
+from coti_safesync_framework.db.session import DbSession
+from coti_safesync_framework.db.locking.row_lock import RowLock
 
 def process_order(engine, order_id: int) -> None:
     """Process an order - only one worker can process a specific order."""
@@ -127,8 +127,8 @@ def process_order(engine, order_id: int) -> None:
 For high-throughput scenarios where conflicts are rare:
 
 ```python
-from conquiet.db.session import DbSession
-from conquiet.db.helpers import occ_update
+from coti_safesync_framework.db.session import DbSession
+from coti_safesync_framework.db.helpers import occ_update
 import time
 import random
 
@@ -174,9 +174,9 @@ def update_account_balance(engine, account_id: int, amount_change: int) -> None:
 For application-level synchronization across multiple tables:
 
 ```python
-from conquiet.db.session import DbSession
-from conquiet.db.locking.advisory_lock import AdvisoryLock
-from conquiet.errors import LockTimeoutError
+from coti_safesync_framework.db.session import DbSession
+from coti_safesync_framework.db.locking.advisory_lock import AdvisoryLock
+from coti_safesync_framework.errors import LockTimeoutError
 
 def process_user_data(engine, user_id: int) -> None:
     """Process all data for a user - only one worker at a time."""
@@ -211,8 +211,8 @@ def process_user_data(engine, user_id: int) -> None:
 For safe duplicate inserts using database constraints:
 
 ```python
-from conquiet.db.session import DbSession
-from conquiet.db.helpers import insert_idempotent
+from coti_safesync_framework.db.session import DbSession
+from coti_safesync_framework.db.helpers import insert_idempotent
 
 def create_user_profile(engine, user_id: int, initial_data: dict) -> None:
     """Create user profile - safe to call multiple times."""
@@ -241,8 +241,8 @@ def create_user_profile(engine, user_id: int, initial_data: dict) -> None:
 
 ```python
 from redis import Redis
-from conquiet.config import QueueConfig
-from conquiet.queue.consumer import QueueConsumer
+from coti_safesync_framework.config import QueueConfig
+from coti_safesync_framework.queue.consumer import QueueConsumer
 
 redis_client = Redis(host="localhost", port=6379)
 config = QueueConfig(
@@ -270,8 +270,8 @@ The `run()` method handles the complete flow: fetch → process → commit → a
 
 ```python
 from sqlalchemy import create_engine
-from conquiet.queue.models import QueueMessage
-from conquiet.db.session import DbSession
+from coti_safesync_framework.queue.models import QueueMessage
+from coti_safesync_framework.db.session import DbSession
 
 engine = create_engine("mysql+pymysql://user:password@host/database")
 
@@ -361,7 +361,7 @@ consumer.run(handler=handle_message, engine=engine)
 
 ## Concurrency Strategies
 
-Conquiet provides multiple strategies for safe concurrent operations:
+COTI SafeSync Framework provides multiple strategies for safe concurrent operations:
 
 | Strategy | Use When | Performance | Contention |
 |----------|----------|-------------|------------|
@@ -405,14 +405,14 @@ See [docs/occ.md](docs/occ.md) for the complete OCC usage guide.
 
 ## Metrics
 
-Conquiet exposes Prometheus metrics:
+COTI SafeSync Framework exposes Prometheus metrics:
 
-- `conquiet_db_write_total` - DB write operation counts
-- `conquiet_db_write_latency_seconds` - DB write latencies
-- `conquiet_db_lock_acquire_latency_seconds` - Lock acquisition timing
-- `conquiet_queue_messages_read_total` - Queue message reads
-- `conquiet_queue_messages_ack_total` - Message acknowledgments
-- `conquiet_queue_messages_claimed_total` - Stale messages claimed
+- `coti_safesync_db_write_total` - DB write operation counts
+- `coti_safesync_db_write_latency_seconds` - DB write latencies
+- `coti_safesync_db_lock_acquire_latency_seconds` - Lock acquisition timing
+- `coti_safesync_queue_messages_read_total` - Queue message reads
+- `coti_safesync_queue_messages_ack_total` - Message acknowledgments
+- `coti_safesync_queue_messages_claimed_total` - Stale messages claimed
 
 ## Documentation
 

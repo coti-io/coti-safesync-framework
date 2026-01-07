@@ -9,7 +9,7 @@ services:
       MYSQL_USER: test_user
       MYSQL_PASSWORD: test_password
     ports:
-      - "3306:3306"
+      - "3307:3306"
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       interval: 10s

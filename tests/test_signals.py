@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from conquiet.signals import install_termination_handlers
+from coti_safesync_framework.signals import install_termination_handlers
 
 
 class TestInstallTerminationHandlers:
@@ -140,7 +140,7 @@ class TestInstallTerminationHandlers:
             signal.signal(signal.SIGTERM, installed_handler)  # Restore it
             
             # Simulate signal with logging patch
-            with patch("conquiet.signals.logging") as mock_logging:
+            with patch("coti_safesync_framework.signals.logging") as mock_logging:
                 installed_handler(signal.SIGTERM, None)
                 
                 # Verify logging.info was called
