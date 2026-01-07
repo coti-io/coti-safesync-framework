@@ -46,17 +46,23 @@ class DbSession:
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
-        # Determine transaction status for metrics
-        status = "error" if exc_type else "success"
         end_time = time.monotonic()
+        commit_failed = False
         
         try:
             if self._tx is not None:
                 if exc_type:
                     self._tx.rollback()
                 else:
-                    self._tx.commit()
+                    try:
+                        self._tx.commit()
+                    except Exception:
+                        commit_failed = True
+                        raise
         finally:
+            # Determine final status
+            status = "error" if (exc_type or commit_failed) else "success"
+            
             if self._conn is not None:
                 self._conn.close()
 
