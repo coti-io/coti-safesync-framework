@@ -66,11 +66,23 @@ jobs:
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
           git remote set-url origin https://github.com/${{ github.repository }}.git
+          # Get the default branch name
+          DEFAULT_BRANCH=$(git ls-remote --symref origin HEAD | grep -oP 'refs/heads/\K\S+')
+          if [ -z "$DEFAULT_BRANCH" ]; then
+            # Fallback to common branch names
+            DEFAULT_BRANCH="main"
+            if ! git ls-remote --heads origin "$DEFAULT_BRANCH" | grep -q .; then
+              DEFAULT_BRANCH="master"
+            fi
+          fi
+          # Checkout the default branch to avoid detached HEAD
+          git fetch origin "$DEFAULT_BRANCH"
+          git checkout "$DEFAULT_BRANCH"
           git add pyproject.toml
           # Only commit if there are changes
           if ! git diff --staged --quiet; then
             git commit -m "Update version to $TAG_NAME"
-            git push origin HEAD
+            git push origin "$DEFAULT_BRANCH"
             echo "Committed and pushed version update"
           else
             echo "No changes to commit"
