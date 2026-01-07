@@ -205,7 +205,9 @@ class QueueConsumer:
                 # Commit already happened
                 self.ack(msg)
 
-    def claim_stale(self, min_idle_ms: Optional[int] = None) -> List[QueueMessage]:
+    def claim_stale(
+        self, min_idle_ms: Optional[int] = None, count: int = 10
+    ) -> List[QueueMessage]:
         """
         Claim stale messages that have been pending longer than the threshold.
 
@@ -221,6 +223,7 @@ class QueueConsumer:
             min_idle_ms: Minimum idle time in milliseconds for a message to be
                         claimed. If None, uses the configured default from
                         config.claim_idle_ms.
+            count: Maximum number of messages to claim per call. Default: 10.
 
         Returns:
             List of claimed QueueMessage objects (may be empty)
@@ -232,7 +235,7 @@ class QueueConsumer:
         if min_idle_ms is None:
             min_idle_ms = self.config.claim_idle_ms
 
-        return self._queue.claim_stale(min_idle_ms=min_idle_ms)
+        return self._queue.claim_stale(min_idle_ms=min_idle_ms, count=count)
 
     def run_claim_stale(
         self,
