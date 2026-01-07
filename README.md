@@ -307,7 +307,7 @@ consumer.run(handler=handle_message, engine=engine)
 
 ### 3. Stale Message Recovery
 
-Messages may become stale if a worker crashes. Use a separate recovery worker:
+Messages may become stale if a worker crashes before acknowledging them. These messages remain pending in Redis and are not automatically redelivered. Use `run_claim_stale()` in a separate worker process to recover stale messages:
 
 ```python
 def recovery_worker():
@@ -315,13 +315,17 @@ def recovery_worker():
     consumer = QueueConsumer(redis_client, config)
     
     consumer.run_claim_stale(
-        handler=handle_message,
+        handler=handle_message,  # Same handler as main consumer
         engine=engine,
         min_idle_ms=60_000,  # Claim messages idle > 60 seconds
         claim_interval_ms=5_000,  # Check every 5 seconds
         max_claim_count=10  # Claim up to 10 messages per check
     )
 ```
+
+**How it works**: `run_claim_stale()` periodically checks for stale messages (every `claim_interval_ms`), claims them, and processes them using the same handler pattern as `run()`. It loops until `stop()` is called.
+
+**Important**: Run the recovery worker in a separate process alongside your main consumer. The recovery worker should use the same `handler` function for consistency.
 
 ### 4. Manual Message Fetching
 
