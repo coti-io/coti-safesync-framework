@@ -37,6 +37,11 @@ def __enter__(self) -> "DbSession":
         raise
 ```
 
+Oded's note:
+The current code is correct.
+If there was an exception in the enter, there's nothing to commit/rollback.
+The exit closes the connection regardless in finally.
+
 ---
 
 ## Bug 2: Incorrect Metrics Status When Commit/Rollback Fails
