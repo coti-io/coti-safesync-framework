@@ -267,7 +267,8 @@ class RedisStreamsQueue:
             if not pending_info:
                 return []
 
-            # Filter by idle time (Redis is authoritative), skip messages already owned by this consumer
+            # Filter by idle time (Redis is authoritative)
+            # Optionally skip messages already owned by this consumer (configurable)
             entry_ids_to_claim: List[str] = []
             for entry_info in pending_info:
                 entry_id = entry_info.get("message_id")
@@ -275,7 +276,7 @@ class RedisStreamsQueue:
                 idle_ms = entry_info.get("time_since_delivered", 0)
 
                 consumer_str = consumer.decode("utf-8") if isinstance(consumer, bytes) else str(consumer)
-                if consumer_str == self.config.consumer_name:
+                if self.config.claim_skip_own_messages and consumer_str == self.config.consumer_name:
                     continue
 
                 if entry_id and idle_ms >= min_idle_ms:

@@ -25,6 +25,10 @@ class QueueConfig:
         max_read_count: Advisory maximum number of messages to read per XREADGROUP call.
             Higher values improve throughput but return larger batches.
             Default: 1.
+        claim_skip_own_messages: If True, claim_stale() will skip messages already owned
+            by this consumer. If False (default), claim_stale() can reclaim messages from
+            any consumer including self, enabling retry workers to retry their own failed
+            messages. Default: False.
     """
     stream_key: str
     consumer_group: str
@@ -32,6 +36,7 @@ class QueueConfig:
     claim_idle_ms: int = 60_000
     block_ms: int = 5_000
     max_read_count: int = 1
+    claim_skip_own_messages: bool = False
 
     def __post_init__(self) -> None:
         """Validate configuration parameters."""

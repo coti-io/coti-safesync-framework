@@ -308,9 +308,16 @@ class TestClaimStale:
 
         assert len(claimed) <= 2
 
-    def test_claim_stale_skips_own_messages(self, redis_client: Redis, queue_config: QueueConfig) -> None:
-        """Test that claim_stale skips messages already owned by the same consumer."""
-        queue = RedisStreamsQueue(redis_client, queue_config)
+    def test_claim_stale_skips_own_messages_when_configured(self, redis_client: Redis, queue_config: QueueConfig) -> None:
+        """Test that claim_stale skips messages already owned by the same consumer when claim_skip_own_messages=True."""
+        # Create config with skip enabled
+        config_with_skip = QueueConfig(
+            stream_key=queue_config.stream_key,
+            consumer_group=queue_config.consumer_group,
+            consumer_name=queue_config.consumer_name,
+            claim_skip_own_messages=True,
+        )
+        queue = RedisStreamsQueue(redis_client, config_with_skip)
 
         # Enqueue and read a message (makes it pending and owned by this consumer)
         queue.enqueue({"test": "data"})
@@ -325,6 +332,25 @@ class TestClaimStale:
 
         # Should not claim its own message
         assert len(claimed) == 0
+
+    def test_claim_stale_claims_own_messages_by_default(self, redis_client: Redis, queue_config: QueueConfig) -> None:
+        """Test that claim_stale can reclaim messages from self by default (claim_skip_own_messages=False)."""
+        queue = RedisStreamsQueue(redis_client, queue_config)
+
+        # Enqueue and read a message (makes it pending and owned by this consumer)
+        queue.enqueue({"test": "data"})
+        messages = queue.read(block_ms=100, count=1)
+        assert len(messages) == 1
+
+        # Wait for message to become stale
+        time.sleep(0.1)
+
+        # Try to claim - should claim own message because default is to not skip
+        claimed = queue.claim_stale(min_idle_ms=50, count=10)
+
+        # Should claim its own message (enables retry workers to retry their own failed messages)
+        assert len(claimed) >= 1
+        assert claimed[0].payload == {"test": "data"}
 
     def test_claim_stale_claims_from_other_consumers(self, redis_client: Redis, queue_config: QueueConfig) -> None:
         """Test that claim_stale can claim messages from other consumers."""
