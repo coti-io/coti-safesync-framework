@@ -304,6 +304,8 @@ with DbSession(engine) as session:
 
 ## Redis Streams Component
 
+**⚠️ CRITICAL REQUIREMENT**: When creating a Redis client for use with this framework, you **MUST** set `decode_responses=False`. The framework's internal implementation expects bytes from Redis (not decoded strings), and using `decode_responses=True` (the default) will cause runtime errors.
+
 ### QueueConsumer: High-Level Message Consumption
 
 `QueueConsumer` is the recommended high-level API for consuming messages from Redis Streams. It provides:
@@ -322,7 +324,14 @@ from coti_safesync_framework.config import QueueConfig
 from coti_safesync_framework.queue.consumer import QueueConsumer
 
 # Create Redis client
-redis_client = Redis(host="localhost", port=6379, db=0)
+# ⚠️ CRITICAL: decode_responses must be False
+# The framework expects bytes from Redis, not decoded strings
+redis_client = Redis(
+    host="localhost",
+    port=6379,
+    db=0,
+    decode_responses=False,
+)
 
 # Configure queue
 config = QueueConfig(
@@ -455,7 +464,14 @@ consumer.stop()
 from coti_safesync_framework.config import QueueConfig
 from coti_safesync_framework.queue.redis_streams import RedisStreamsQueue
 
-redis_client = Redis(host="localhost", port=6379, db=0)
+# ⚠️ CRITICAL: decode_responses must be False
+# The framework expects bytes from Redis, not decoded strings
+redis_client = Redis(
+    host="localhost",
+    port=6379,
+    db=0,
+    decode_responses=False,
+)
 
 config = QueueConfig(
     stream_key="my_stream",
