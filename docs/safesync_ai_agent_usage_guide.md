@@ -2,6 +2,16 @@
 
 This document provides a practical reference for AI agents on how to use the `coti_safesync_framework` library's DB and Redis Streams components.
 
+## Installation
+
+This library should be installed from PyPI:
+
+```bash
+pip install coti-safesync-framework
+```
+
+For more information, see the [PyPI project page](https://pypi.org/project/coti-safesync-framework/).
+
 ---
 
 ## Table of Contents
